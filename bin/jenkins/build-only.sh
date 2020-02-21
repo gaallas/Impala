@@ -24,6 +24,8 @@ setup_report_build_error
 
 cd "${IMPALA_HOME}"
 
-export IMPALA_MAVEN_OPTIONS="-U"
+export IMPALA_MAVEN_OPTIONS="-U \
+  -Dorg.slf4j.simpleLogger.showDateTime=true \
+  -Dorg.slf4j.simpleLogger.dateTimeFormat=HH:mm:ss.SSS"
 
 bin/bootstrap_build.sh
