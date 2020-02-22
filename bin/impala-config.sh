@@ -497,7 +497,13 @@ export USE_GOLD_LINKER=${USE_GOLD_LINKER-true}
 export IMPALA_CXX_COMPILER=${IMPALA_CXX_COMPILER-default}
 
 # Add options to 'mvn'; useful for configuring a settings file (-s).
-export IMPALA_MAVEN_OPTIONS=${IMPALA_MAVEN_OPTIONS-}
+# -Daether.dependencyCollector.impl=bf instructs the new HTTP transport for the
+# Maven resolver to traverse the dependency tree in a breadth-first (hence 'bf') manner,
+# enabling parallel downloads of dependency POMs. This requires Maven 3.9.0+, and is
+# ignored by older Maven versions.
+export IMPALA_MAVEN_OPTIONS="${IMPALA_MAVEN_OPTIONS-}"
+IMPALA_MAVEN_OPTIONS+=" --no-transfer-progress"
+IMPALA_MAVEN_OPTIONS+=" -Daether.dependencyCollector.impl=bf"
 
 # If enabled, debug symbols are added to cross-compiled IR.
 export ENABLE_IMPALA_IR_DEBUG_INFO=${ENABLE_IMPALA_IR_DEBUG_INFO-false}
