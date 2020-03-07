@@ -83,8 +83,12 @@ function build() {
   if which apt-get > /dev/null; then
     apt-get update
     apt-get install -y sudo git lsb-release python
+  elif grep 'release 8\.' /etc/redhat-release; then
+    yum -y install which sudo git python2
+    alternatives --set python /usr/bin/python2
+    ln -s /usr/bin/pip2 /usr/bin/pip
   else
-    yum -y install sudo git python
+    yum -y install which sudo git python
   fi
 
   if ! id impdev; then
