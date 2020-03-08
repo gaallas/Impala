@@ -328,7 +328,7 @@ fi
 if wget -q -T 1 -t 1 -o /dev/null http://169.254.169.254/latest/dynamic/instance-identity
 then
   NTP_CONF_FILE="/etc/ntp.conf"
-  redhat8 NTP_CONF_FILE="/etc/chrony.conf"
+  redhat8 export NTP_CONF_FILE="/etc/chrony.conf"
   sudo sed -i 's/ubuntu\.pool/amazon\.pool/' ${NTP_CONF_FILE}
 fi
 # While it is nice to have ntpd running to keep the clock in sync, that does not work in a
