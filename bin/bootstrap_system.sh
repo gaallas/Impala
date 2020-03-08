@@ -198,7 +198,7 @@ function apt-get {
 
 echo ">>> Installing build tools"
 ubuntu apt-get update
-ubuntu apt-get --yes install ccache g++ gcc libffi-dev liblzo2-dev libkrb5-dev \
+ubuntu apt-get --yes install curl ccache g++ gcc libffi-dev liblzo2-dev libkrb5-dev \
         krb5-admin-server krb5-kdc krb5-user libsasl2-dev libsasl2-modules \
         libsasl2-modules-gssapi-mit libssl-dev make ninja-build ntp \
         ntpdate python-dev python-setuptools postgresql ssh wget vim-common psmisc \
@@ -318,7 +318,7 @@ redhat8 notindocker sudo service chronyd stop
 
 # only RedHat8 uses chrony instead of NTP
 redhat8 sudo chronyd -q
-if [ $REDHAT8 != "true" ]; then
+if [[ $REDHAT8 != true ]]; then
   sudo ntpdate us.pool.ntp.org
 fi
 
