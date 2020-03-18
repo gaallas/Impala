@@ -85,8 +85,23 @@ function build() {
     apt-get install -y sudo git lsb-release python
   elif grep 'release 8\.' /etc/redhat-release; then
     yum -y install which sudo git python2
-    alternatives --set python /usr/bin/python2
-    ln -s /usr/bin/pip2 /usr/bin/pip
+    if command -v python && [[ $(python --version 2>&1 | cut -d ' ' -f 2) =~ 2\. ]]; then
+      echo "We have Python 2.x and it is the default Python";
+    else
+      if ! command -v python2; then
+        # Python2 needs to be installed
+        echo "Python2 is is missing, installing..."
+        yum install -y python2
+      fi
+      # Here Python2 is installed, but is not the default Python.
+      # 1. Link pip's version to Python's version
+      echo "Set up Python2 and pip2 to be the default..."
+      alternatives --add-slave python /usr/bin/python2 /usr/bin/pip pip /usr/bin/pip2
+      alternatives --add-slave python /usr/libexec/no-python  /usr/bin/pip pip \
+          /usr/libexec/no-python
+      # 2. Set Python2 (with pip2) to be the system default.
+      alternatives --set python /usr/bin/python2
+    fi
   else
     yum -y install which sudo git python
   fi

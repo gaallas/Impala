@@ -278,8 +278,8 @@ redhat8 sudo yum install -y --enablerepo="PowerTools*" snappy-devel
 # Set up unversioned default Python 2.x for older CentOS versions
 redhat6 sudo yum install -y python-devel python-setuptools python-argparse
 redhat7 sudo yum install -y python-devel python-setuptools python-argparse
-
 # Install Python 2.x explicitly for CentOS 8
+
 function setup_python2() {
   if command -v python && [[ $(python --version 2>&1 | cut -d ' ' -f 2) =~ 2\. ]]; then
     echo "We have Python 2.x";

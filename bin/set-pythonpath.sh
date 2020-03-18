@@ -31,6 +31,8 @@ else
   PYTHONPATH=${PYTHONPATH}:${IMPALA_HOME}/shell/gen-py
 fi
 
+PYTHONPATH=${PYTHONPATH}:${IMPALA_HOME}/infra/python/lib
+
 # There should be just a single version of python that created the
 # site-packages directory. We find it by performing shell independent expansion
 # of the following pattern:

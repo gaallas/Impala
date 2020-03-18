@@ -30,6 +30,7 @@ import requests
 import shutil
 import socket
 import subprocess
+import sys
 import tempfile
 import time
 from functools import wraps
@@ -152,6 +153,7 @@ class ImpalaTestSuite(BaseTestSuite):
   @classmethod
   def setup_class(cls):
     """Setup section that runs before each test suite"""
+    assert sys.version_info > (2, 7), "Tests only support Python 2.7+"
     cls.client = None
     cls.hive_client = None
     cls.hs2_client = None

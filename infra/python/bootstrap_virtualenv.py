@@ -47,6 +47,11 @@ import tempfile
 import textwrap
 import urllib
 
+# Ensure the ssl modules are loaded correctly.
+import ssl
+from httplib import HTTPConnection
+from urllib2 import HTTPSHandler
+
 LOG = logging.getLogger(os.path.splitext(os.path.basename(__file__))[0])
 
 DEPS_DIR = os.path.join(os.path.dirname(__file__), "deps")
@@ -83,7 +88,9 @@ def create_virtualenv():
   for member in file.getmembers():
     file.extract(member, build_dir)
   file.close()
-  python_cmd = detect_python_cmd()
+  python_cmd = download_toolchain_python()
+  output = exec_cmd([python_cmd, os.path.join(os.path.dirname(__file__), "tmp.py")])
+  LOG.info("Ran tmp.py OK")
   exec_cmd([python_cmd, find_file(build_dir, "virtualenv*", "virtualenv.py"), "--quiet",
       "--python", python_cmd, ENV_DIR])
   shutil.rmtree(build_dir)
@@ -189,21 +196,27 @@ def find_file(*paths):
   return files[0]
 
 
-def detect_python_cmd():
-  '''Returns the system command that provides python 2.6 or greater.'''
-  paths = os.getenv("PATH").split(os.path.pathsep)
-  for cmd in ("python", "python27", "python2.7", "python-27", "python-2.7", "python26",
-      "python2.6", "python-26", "python-2.6"):
-    for path in paths:
-      cmd_path = os.path.join(path, cmd)
-      if not os.path.exists(cmd_path) or not os.access(cmd_path, os.X_OK):
-        continue
-      exit = subprocess.call([cmd_path, "-c", textwrap.dedent("""
-          import sys
-          sys.exit(int(sys.version_info[:2] < (2, 6)))""")])
-      if exit == 0:
-        return cmd_path
-  raise Exception("Could not find minimum required python version 2.6")
+def download_toolchain_python():
+  '''Grabs the Python implementation from the Impala toolchain, using the machinery from
+     bin/bootstrap_toolchain.py
+  '''
+
+  toolchain_root = os.environ.get("IMPALA_TOOLCHAIN")
+  if not toolchain_root:
+    raise Exception(
+        "Impala environment not set up correctly, make sure $IMPALA_TOOLCHAIN is set.")
+
+  # This is the only time when $IMPALA_HOME/bin needs to be on PYTHONPATH,
+  # so add it dynamically, don't pollute bin/set_pythonpath.sh with it.
+  sys.path.append(os.environ.get("IMPALA_HOME")+"/bin")
+  from bootstrap_toolchain import (ToolchainPackage)
+  package = ToolchainPackage("python")
+  package.download()
+  python_cmd = os.path.join(package.pkg_directory(), "bin/python")
+  if not os.path.exists(python_cmd):
+    raise Exception("Unexpected error bootstrapping python from toolchain: {0} does not "
+                    "exist".format(python_cmd))
+  return python_cmd
 
 
 def install_deps():
