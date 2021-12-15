@@ -293,7 +293,7 @@ class Suite(object):
     self.sharding_variable = None
     self.envs[name] = "true"
     self.envs.update(envs)
-    self.timeout_minutes = 120
+    self.timeout_minutes = 180
 
   def copy(self, name, **envs):
     """Duplicates current suite allowing for environment updates."""
@@ -350,10 +350,10 @@ cluster_test_exhaustive = cluster_test.exhaustive()
 # Default supported suites. These are organized slowest-to-fastest, so that,
 # when parallelism is limited, the total time is least impacted.
 DEFAULT_SUITES = [
+    Suite("FE_TEST"),
     ee_test_serial,
     ee_test_parallel,
     cluster_test,
-    Suite("FE_TEST"),
     Suite("BE_TEST"),
     Suite("JDBC_TEST")
 ]
