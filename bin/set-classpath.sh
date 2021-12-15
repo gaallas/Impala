@@ -30,7 +30,7 @@ fi
 
 CLASSPATH=\
 "$IMPALA_HOME"/fe/src/test/resources:\
-"$IMPALA_HOME"/fe/target/classes:\
+"$IMPALA_HOME"/fe/target/impala-frontend-4.0.0-SNAPSHOT.jar:\
 "$IMPALA_HOME"/fe/target/dependency:\
 "$IMPALA_HOME"/fe/target/test-classes:
 
