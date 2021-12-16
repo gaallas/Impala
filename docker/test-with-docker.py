@@ -351,10 +351,10 @@ cluster_test_exhaustive = cluster_test.exhaustive()
 # when parallelism is limited, the total time is least impacted.
 DEFAULT_SUITES = [
     Suite("FE_TEST"),
-    ee_test_serial,
     ee_test_parallel,
-    cluster_test,
     Suite("BE_TEST"),
+    cluster_test,
+    ee_test_serial,
     Suite("JDBC_TEST")
 ]
 
