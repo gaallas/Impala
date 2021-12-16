@@ -553,8 +553,8 @@ class TestWithDocker(object):
           # Label with the git root directory for easier cleanup
           "--label=pwd=" + self.git_root,
           # Consistent locales
-          "-e", "LC_ALL=en_US.utf8",
-          "-e", "LANG=en_US.utf8",
+          "-e", "LC_ALL=C.UTF-8",
+          "-e", "LANG=C.UTF-8",
           "-e", "IMPALAD_MEM_LIMIT_BYTES=" +
           str(self.impalad_mem_limit_bytes),
           # Mount the git directory so that clones can be local.
