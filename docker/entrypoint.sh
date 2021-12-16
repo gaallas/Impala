@@ -410,13 +410,6 @@ function test_suite() {
   # BE tests don't require the minicluster, so we can run them directly.
   if [[ $1 = BE_TEST* ]]; then
     make -j$(nproc) --load-average=$(nproc) be-test be-benchmarks
-    if ! bin/run-backend-tests.sh; then
-      echo "Tests $1 failed!"
-      return 1
-    else
-      echo "Tests $1 succeeded!"
-      return 0
-    fi
   fi
 
   if [[ $1 == RAT_CHECK ]]; then
