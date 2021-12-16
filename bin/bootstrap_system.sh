@@ -219,7 +219,7 @@ ubuntu apt-get --yes install ccache curl gawk g++ gcc libffi-dev \
         libkrb5-dev krb5-admin-server krb5-kdc krb5-user libsasl2-dev \
         libsasl2-modules libsasl2-modules-gssapi-mit libssl-dev make ninja-build \
         python-dev python-setuptools postgresql ssh wget vim-common psmisc \
-        lsof openjdk-8-jdk openjdk-8-source openjdk-8-dbg apt-utils git ant
+        lsof openjdk-8-jdk openjdk-8-source openjdk-8-dbg apt-utils git ant locales
 # Required by Kudu in the minicluster
 ubuntu20 apt-get --yes install libtinfo5
 ARCH_NAME=$(uname -p)
@@ -227,6 +227,8 @@ if [[ $ARCH_NAME == 'aarch64' ]]; then
   ubuntu apt-get --yes install unzip pkg-config flex maven python3-pip build-essential \
           texinfo bison autoconf automake libtool libz-dev libncurses-dev
 fi
+
+ubuntu sudo locale-gen en_US.UTF-8
 
 if [[ "$UBUNTU" == true ]]; then
   # Don't use openjdk-8-jdk 8u181-b13-1ubuntu0.16.04.1 which is known to break the
