@@ -41,6 +41,8 @@ fi
 # Parametrized Test Options
 # Run FE Tests
 : ${FE_TEST:=true}
+# Run Auth FE Tests
+: ${AUTH_FE_TEST:=true}
 # Run Backend Tests
 : ${BE_TEST:=true}
 # Run End-to-end Tests
@@ -233,9 +235,9 @@ do
       MVN_ARGS+="-DcodeCoverage"
     fi
     # Run the FE tests first. We run the FE custom cluster tests below since they
-    # restart Impala.
+    # restart Impala. The authorization tests are run separately.
     MVN_ARGS_TEMP=$MVN_ARGS
-    MVN_ARGS+=" -Dtest=!org.apache.impala.custom*.*Test"
+    MVN_ARGS+=" -Dtest=!org.apache.impala.custom*.*Test,!org.apache.impala.authorization.*Test"
     if ! "${IMPALA_HOME}/bin/mvn-quiet.sh" -fae test ${MVN_ARGS}; then
       TEST_RET_CODE=1
     fi
@@ -249,6 +251,22 @@ do
       fi
       # Restart the minicluster after running the FE custom cluster tests.
       start_impala_cluster
+    fi
+    popd
+  fi
+
+  if [[ "$AUTH_FE_TEST" == true ]]; then
+    # Run JUnit authorization frontend tests
+    pushd "${IMPALA_FE_DIR}"
+    MVN_ARGS=""
+    if [[ "$CODE_COVERAGE" == true ]]; then
+      MVN_ARGS+="-DcodeCoverage"
+    fi
+    # Run the FE authorization tests.
+    MVN_ARGS_TEMP=$MVN_ARGS
+    MVN_ARGS+=" -Dtest=org.apache.impala.authorization.*Test"
+    if ! "${IMPALA_HOME}/bin/mvn-quiet.sh" -fae test ${MVN_ARGS}; then
+      TEST_RET_CODE=1
     fi
     popd
   fi

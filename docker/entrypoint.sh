@@ -458,7 +458,7 @@ function test_suite() {
 
   # Asserting that these should are all set (to either true or false as strings).
   # This is how run-all.sh chooses between them.
-  [[ $FE_TEST && $BE_TEST && $EE_TEST && $JDBC_TEST && $CLUSTER_TEST ]]
+  [[ $FE_TEST && $AUTH_FE_TEST && $BE_TEST && $EE_TEST && $JDBC_TEST && $CLUSTER_TEST ]]
 
   ret=0
 

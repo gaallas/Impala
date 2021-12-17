@@ -282,6 +282,7 @@ class Suite(object):
     """Create suite with given name and environment."""
     self.name = name
     self.envs = dict(
+        AUTH_FE_TEST="false",
         FE_TEST="false",
         BE_TEST="false",
         EE_TEST="false",
@@ -351,11 +352,11 @@ cluster_test_exhaustive = cluster_test.exhaustive()
 # when parallelism is limited, the total time is least impacted.
 DEFAULT_SUITES = [
     Suite("FE_TEST"),
+    Suite("AUTH_FE_TEST"),
     ee_test_parallel,
     Suite("BE_TEST"),
     cluster_test,
-    ee_test_serial,
-    Suite("JDBC_TEST")
+    ee_test_serial
 ]
 
 OTHER_SUITES = [
