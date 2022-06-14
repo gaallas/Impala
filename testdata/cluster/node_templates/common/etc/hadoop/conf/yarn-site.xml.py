@@ -68,6 +68,9 @@ CONFIG = {
 
   # Increase YARN container resources to 2GB to avoid dataload failures
   'yarn.app.mapreduce.am.resource.mb': 2048
+
+  # Increase YARN minimum container size to 2GB to avoid dataload failures
+  'yarn.scheduler.minimum-allocation-mb': 2048
 }
 
 app_classpath = [
