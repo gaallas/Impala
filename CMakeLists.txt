@@ -122,7 +122,8 @@ set_dep_root(GCC)
 set_dep_root(GFLAGS)
 set_dep_root(GLOG)
 set_dep_root(GPERFTOOLS)
-set_dep_root(GTEST)
+set(GTEST_ROOT
+    $ENV{IMPALA_TOOLCHAIN_PACKAGES_HOME}/googletest-$ENV{IMPALA_GTEST_VERSION})
 set_dep_root(JWT_CPP)
 set_dep_root(LIBEV)
 set_dep_root(LIBUNWIND)
@@ -256,7 +257,7 @@ IMPALA_ADD_THIRDPARTY_LIB(pprof ${PPROF_INCLUDE_DIR} ${PPROF_STATIC_LIB} "")
 # find GTest headers and libs
 set (GTEST_FIND_QUIETLY TRUE)
 find_package(GTest REQUIRED)
-IMPALA_ADD_THIRDPARTY_LIB(gtest ${GTEST_INCLUDE_DIR} ${GTEST_STATIC_LIB} "")
+IMPALA_ADD_THIRDPARTY_LIB(gtest ${GTEST_INCLUDE_DIR} ${GTEST_LIBRARIES} "")
 
 # Use LLVM release binaries.
 set(LLVM_BINARIES_ROOT ${LLVM_ROOT})

@@ -11200,7 +11200,7 @@ TEST_P(ExprTest, Utf8Test) {
 
 } // namespace impala
 
-INSTANTIATE_TEST_CASE_P(Instantiations, ExprTest, ::testing::Values(
+INSTANTIATE_TEST_SUITE_P(Instantiations, ExprTest, ::testing::Values(
   //              disable_codegen  enable_expr_rewrites
   std::make_tuple(true,            false),
   std::make_tuple(false,           false),
