@@ -126,7 +126,7 @@ under the License.
     <!-- Regular remote repositories -->
     <repository>
       <id>cdh.rcs.releases.repo</id>
-      <url>https://repository.cloudera.com/artifactory/cdh-releases-rcs</url>
+      <url> https://repository-test2.repo.cloudera.com/artifactory/cdh-releases-rcs</url>
       <name>CDH Releases Repository</name>
       <snapshots>
         <enabled>false</enabled>
@@ -215,6 +215,26 @@ under the License.
     </repository>
     <repository>
       <!--
+      The Impala development bootstrapping depends on CDH Maven snapshots
+      which transitively pull dependencies from other repositories which
+      can cause the build to be non-reproducible, e.g. IMPALA-7316. This
+      patch makes the build to be reproducible by banning
+      cdh.snapshots.repo so that Maven does not accidentally download the
+      latest CDH snapshots when running a build, which can cause
+      incompatibility issues.
+      -->
+      <id>test.cdh.snapshots.repo</id>
+      <url>https://repository-test2.repo.cloudera.com/content/repositories/snapshots</url>
+      <name>Beta CDH Snapshots Repository</name>
+      <releases>
+        <enabled>false</enabled>
+      </releases>
+      <snapshots>
+        <enabled>false</enabled>
+      </snapshots>
+    </repository>
+    <repository>
+      <!--
       HWX Nexus is disabled. This is a tombstone to list out why:
       1. Snapshots are disabled because HWX Nexus contains snapshots of artifacts
       that can conflict with the artifacts in any of the other repositories with
@@ -247,7 +267,7 @@ under the License.
   <pluginRepositories>
     <pluginRepository>
       <id>cdh.rcs.releases.repo</id>
-      <url>https://repository.cloudera.com/artifactory/cdh-releases-rcs</url>
+      <url> https://repository-test2.repo.cloudera.com/artifactory/cdh-releases-rcs</url>
       <name>CDH Releases Repository</name>
       <snapshots>
         <enabled>false</enabled>
