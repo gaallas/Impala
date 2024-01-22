@@ -42,4 +42,4 @@ source ./bin/bootstrap_system.sh
 # setup_docker takes effect. This does a full re-login and does not stay
 # in the current directory, so change back to $IMPALA_HOME (resolved in
 # the current environment) before executing the script.
-sudo su - $USER -c "cd ${IMPALA_HOME} && ./bin/jenkins/dockerized-impala-run-tests.sh"
+sudo su -w IMPALA_TOOLCHAIN_HOST - $USER -c "cd ${IMPALA_HOME} && ./bin/jenkins/dockerized-impala-run-tests.sh"
