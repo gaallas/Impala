@@ -447,10 +447,10 @@ public class MetastoreEvents {
     protected final String catalogName_;
 
     // dbName from the event
-    protected final String dbName_;
+    protected String dbName_;
 
     // tblName from the event
-    protected final String tblName_;
+    protected String tblName_;
 
     // eventId of the event. Used instead of calling getter on event_ everytime
     private long eventId_;
@@ -505,6 +505,18 @@ public class MetastoreEvents {
       if (dbName_ == null && tblName_ == null) return "CLUSTER_WIDE";
       if (tblName_ == null) return dbName_;
       return dbName_ + "." + tblName_;
+    }
+
+    public CatalogOpExecutor getCatalogOpExecutor() {
+      return catalogOpExecutor_;
+    }
+
+    public NotificationEvent getEvent() {
+      return event_;
+    }
+
+    public Metrics getMetrics() {
+      return metrics_;
     }
 
     /**
@@ -1207,6 +1219,12 @@ public class MetastoreEvents {
       }
     }
 
+    protected CreateTableEvent(CatalogOpExecutor catalogOpExecutor, Metrics metrics, NotificationEvent event,
+        org.apache.hadoop.hive.metastore.api.Table table) {
+      super(catalogOpExecutor, metrics, event);
+      msTbl_ = table;
+    }
+
     @Override
     public SelfEventContext getSelfEventContext() {
       throw new UnsupportedOperationException("Self-event evaluation is unnecessary for"
@@ -1780,6 +1798,12 @@ public class MetastoreEvents {
                 + "Check if %s is set to true in metastore configuration",
             MetastoreEventsProcessor.HMS_ADD_THRIFT_OBJECTS_IN_EVENTS_CONFIG_KEY), e);
       }
+    }
+
+    protected DropTableEvent(CatalogOpExecutor catalogOpExecutor, Metrics metrics, NotificationEvent event,
+        org.apache.hadoop.hive.metastore.api.Table table) {
+      super(catalogOpExecutor, metrics, event);
+      msTbl_ = table;
     }
 
     @Override
@@ -2835,6 +2859,16 @@ public class MetastoreEvents {
       txnId_ = abortTxnMessage.getTxnId();
     }
 
+    AbortTxnEvent(long txnId, CatalogOpExecutor catalogOpExecutor, Metrics metrics,
+        NotificationEvent event) {
+      super(catalogOpExecutor, metrics, event);
+      txnId_ = txnId;
+    }
+
+    public long getTxnId() {
+      return txnId_;
+    }
+
     @Override
     protected void process() throws MetastoreNotificationException {
       try {
@@ -2849,7 +2883,7 @@ public class MetastoreEvents {
       }
     }
 
-    private void addAbortedWriteIdsToTables(Set<TableWriteId> tableWriteIds)
+    protected void addAbortedWriteIdsToTables(Set<TableWriteId> tableWriteIds)
         throws CatalogException {
       for (TableWriteId tableWriteId: tableWriteIds) {
         catalog_.addWriteIdsToTable(tableWriteId.getDbName(), tableWriteId.getTblName(),
@@ -2876,6 +2910,31 @@ public class MetastoreEvents {
     @Override
     protected boolean shouldSkipWhenSyncingToLatestEventId() {
       return false;
+    }
+  }
+
+  public static class PseudoAbortTxnEvent extends AbortTxnEvent {
+    final private List<Long> writeIds_;
+
+    public PseudoAbortTxnEvent(AbortTxnEvent event, TableName tableName, List<Long> writeIds) {
+      super(event.txnId_, event.catalogOpExecutor_, event.metrics_, event.event_);
+      writeIds_ = writeIds;
+      dbName_ = tableName.getDb();
+      tblName_ = tableName.getTbl();
+    }
+
+    @Override
+    protected void process() throws MetastoreNotificationException {
+      try {
+        catalog_.addWriteIdsToTable(dbName_, tblName_,
+            getEventId(), writeIds_,
+            MutableValidWriteIdList.WriteIdStatus.ABORTED);
+      } catch (CatalogException e) {
+        throw new MetastoreNotificationNeedsInvalidateException(debugString("Failed to "
+                + "mark aborted write ids to table for txn {}. Event processing cannot "
+                + "continue. Issue an invalidate metadata command to reset event processor.",
+            getTxnId()), e);
+      }
     }
   }
 

@@ -540,6 +540,8 @@ public class MetastoreEventsProcessor implements ExternalEventsProcessor {
   // polling interval in seconds. Note this is a time we wait AFTER each fetch call
   private final long pollingFrequencyInSec_;
 
+  private List<DBEventExecutor> dbEventExecutors_;
+
   // catalog service instance to be used while processing events
   protected final CatalogServiceCatalog catalog_;
 
@@ -580,6 +582,7 @@ public class MetastoreEventsProcessor implements ExternalEventsProcessor {
     initMetrics();
     metastoreEventFactory_ = new MetastoreEventFactory(catalogOpExecutor);
     pollingFrequencyInSec_ = pollingFrequencyInSec;
+    initEventExecutors();
   }
 
   /**
@@ -655,6 +658,93 @@ public class MetastoreEventsProcessor implements ExternalEventsProcessor {
     metrics_.addTimer(AVG_DELAY_IN_CONSUMING_EVENTS);
   }
 
+  private void initEventExecutors() {
+    Preconditions.checkState(dbEventExecutors_ == null);
+    int maxDbEventExecutors = 10; // TODO: Read config
+    int maxTableEventExecutors = 10; // TODO: Read config
+    dbEventExecutors_ = new ArrayList<>(maxDbEventExecutors);
+    for (int i = 0; i < maxDbEventExecutors; i++) {
+      dbEventExecutors_.add(new DBEventExecutor(String.valueOf(i), maxTableEventExecutors));
+    }
+  }
+  private void startEventExecutors() {
+    Preconditions.checkState(dbEventExecutors_ != null);
+    dbEventExecutors_.forEach(DBEventExecutor::start);
+  }
+
+  private void shutdownEventExecutors() {
+    Preconditions.checkState(dbEventExecutors_ != null);
+    dbEventExecutors_.forEach(DBEventExecutor::stop);
+    DBEventExecutor.clearEventExecutors();
+  }
+
+  private int getOutstandingEventCount() {
+    int count = 0;
+    for (DBEventExecutor dee : dbEventExecutors_) {
+      count += dee.getOutstandingEventCount();
+    }
+    return count;
+  }
+
+  private DBEventExecutor getOrAssignEventExecutor(String dbName) {
+    DBEventExecutor eventExecutor = DBEventExecutor.getEventExecutor(dbName);
+    if (eventExecutor == null) {
+      int minOutStandingEvents = Integer.MAX_VALUE;
+      for (DBEventExecutor dee : dbEventExecutors_) {
+        if (minOutStandingEvents > dee.getOutstandingEventCount()) {
+          minOutStandingEvents = dee.getOutstandingEventCount();
+          eventExecutor = dee;
+        }
+      }
+      DBEventExecutor.assignEventExecutor(dbName, eventExecutor);
+    }
+    return eventExecutor;
+  }
+
+  private void cleanupEventExecutors() {
+    // Cleanup db event executors for any stale db processors that have exceeded threshold to remove
+    dbEventExecutors_.forEach(DBEventExecutor::cleanup);
+  }
+
+  private void dispatchEvent(MetastoreEvent event) {
+    if (event instanceof MetastoreShim.CommitTxnEvent) {
+      List<MetastoreShim.PseudoCommitTxnEvent> pseudoCommitTxnEvents = MetastoreShim.getPseudoCommitTxnEvents((MetastoreShim.CommitTxnEvent)event);
+      for (MetastoreShim.PseudoCommitTxnEvent pseudoCommitTxnEvent : pseudoCommitTxnEvents) {
+        DBEventExecutor dbEventExecutor = getOrAssignEventExecutor(pseudoCommitTxnEvent.getDbName());
+        dbEventExecutor.enqueue(pseudoCommitTxnEvent);
+      }
+    } else if (event instanceof MetastoreEvents.AbortTxnEvent) {
+      List<MetastoreEvents.PseudoAbortTxnEvent> pseudoAbortTxnEvents = MetastoreShim.getPseudoAbortTxnEvents((MetastoreEvents.AbortTxnEvent)event);
+      for (MetastoreEvents.PseudoAbortTxnEvent pseudoAbortTxnEvent : pseudoAbortTxnEvents) {
+        DBEventExecutor dbEventExecutor = getOrAssignEventExecutor(pseudoAbortTxnEvent.getDbName());
+        dbEventExecutor.enqueue(pseudoAbortTxnEvent);
+      }
+    } else if (event instanceof MetastoreEvents.AlterTableEvent && ((MetastoreEvents.AlterTableEvent) event).isRename_) {
+      // Enqueue an event to old db event processor and an event to new db event processor
+      MetastoreEvents.AlterTableEvent alterEvent = (MetastoreEvents.AlterTableEvent) event;
+      NotificationEvent pseudoDropTableEvent = new NotificationEvent();
+      pseudoDropTableEvent.setEventType(MetastoreEvents.MetastoreEventType.DROP_TABLE.toString());
+      pseudoDropTableEvent.setTableName(alterEvent.getBeforeTable().getTableName());
+      pseudoDropTableEvent.setDbName(alterEvent.getBeforeTable().getDbName());
+      pseudoDropTableEvent.setCatName(alterEvent.getCatalogName());
+      pseudoDropTableEvent.setEventId(event.getEventId());
+      DBEventExecutor dbEventExecutor = getOrAssignEventExecutor(alterEvent.getBeforeTable().getDbName());
+      dbEventExecutor.enqueue(new MetastoreEvents.DropTableEvent(event.catalogOpExecutor_, event.metrics_, pseudoDropTableEvent, alterEvent.getBeforeTable()));
+
+      NotificationEvent pseudoCreateTableEvent = new NotificationEvent();
+      pseudoCreateTableEvent.setEventType(MetastoreEvents.MetastoreEventType.CREATE_TABLE.toString());
+      pseudoCreateTableEvent.setTableName(alterEvent.getBeforeTable().getTableName());
+      pseudoCreateTableEvent.setDbName(alterEvent.getBeforeTable().getDbName());
+      pseudoCreateTableEvent.setCatName(alterEvent.getCatalogName());
+      pseudoCreateTableEvent.setEventId(event.getEventId());
+      dbEventExecutor = getOrAssignEventExecutor(alterEvent.getAfterTable().getDbName());
+      dbEventExecutor.enqueue(new MetastoreEvents.CreateTableEvent(event.catalogOpExecutor_, event.metrics_, pseudoCreateTableEvent, alterEvent.getAfterTable()));
+    } else {
+      DBEventExecutor dbEventExecutor = getOrAssignEventExecutor(event.getDbName());
+      dbEventExecutor.enqueue(event);
+    }
+  }
+
   /**
    * Schedules the daemon thread at a given frequency. It is important to note that this
    * method schedules with FixedDelay instead of FixedRate. The reason it is scheduled at
@@ -666,6 +756,7 @@ public class MetastoreEventsProcessor implements ExternalEventsProcessor {
   @Override
   public synchronized void start() {
     Preconditions.checkState(eventProcessorStatus_ != EventProcessorStatus.ACTIVE);
+    startEventExecutors();
     startScheduler();
     updateStatus(EventProcessorStatus.ACTIVE);
     LOG.info(String.format("Successfully started metastore event processing."
@@ -842,6 +933,7 @@ public class MetastoreEventsProcessor implements ExternalEventsProcessor {
         "Event processing is already stopped");
     shutdownAndAwaitTermination(processEventsScheduler_);
     shutdownAndAwaitTermination(updateEventIdScheduler_);
+    shutdownEventExecutors();
     updateStatus(EventProcessorStatus.STOPPED);
     LOG.info("Metastore event processing stopped.");
   }
@@ -850,7 +942,7 @@ public class MetastoreEventsProcessor implements ExternalEventsProcessor {
    * Attempts to cleanly shutdown the scheduler pool. If the pool does not shutdown
    * within timeout, does a force shutdown which might interrupt currently running tasks.
    */
-  private synchronized void shutdownAndAwaitTermination(ScheduledExecutorService ses) {
+  public static void shutdownAndAwaitTermination(ScheduledExecutorService ses) {
     Preconditions.checkNotNull(ses);
     ses.shutdown(); // disable new tasks from being submitted
     try {
@@ -963,6 +1055,11 @@ public class MetastoreEventsProcessor implements ExternalEventsProcessor {
             currentStatus, lastSyncedEventId_.get()));
         return;
       }
+      int outstandingEventCount = getOutstandingEventCount();
+      if (outstandingEventCount >= 1000) {
+        LOG.warn(String.format("Total outstanding events to process exceeds threshold. Not fetching events until number of outstanding events go below the threshold"));
+        return;
+      }
       // fetch the current notification event id. We assume that the polling interval
       // is small enough that most of these polling operations result in zero new
       // events. In such a case, fetching current notification event id is much faster
@@ -991,6 +1088,8 @@ public class MetastoreEventsProcessor implements ExternalEventsProcessor {
       eventProcessorErrorMsg_ = LocalDateTime.now().toString() + '\n' + msg + '\n' +
           ExceptionUtils.getFullStackTrace(ex);
       dumpEventInfoToLog(currentEvent_);
+    } finally {
+      cleanupEventExecutors();
     }
   }
 
@@ -1161,7 +1260,8 @@ public class MetastoreEventsProcessor implements ExternalEventsProcessor {
               event.getEventType(), targetName, event.getEventId());
           try (ThreadNameAnnotator tna = new ThreadNameAnnotator(desc)) {
             long startMs = System.currentTimeMillis();
-            event.processIfEnabled();
+            dispatchEvent(event);
+            //event.processIfEnabled();
             long elapsedTimeMs = System.currentTimeMillis() - startMs;
             eventProcessingTime.put(event, elapsedTimeMs);
           }
@@ -1173,11 +1273,11 @@ public class MetastoreEventsProcessor implements ExternalEventsProcessor {
                   TimeUnit.SECONDS);
         }
       }
-    } catch (CatalogException e) {
+    } /*catch (CatalogException e) {
       throw new MetastoreNotificationException(String.format(
           "Unable to process event %d of type %s. Event processing will be stopped.",
           currentEvent_.getEventId(), currentEvent_.getEventType()), e);
-    } finally {
+    } */finally {
       long elapsedNs = context.stop();
       lastEventProcessDurationNs_.set(elapsedNs);
       logEventMetrics(eventProcessingTime, elapsedNs);

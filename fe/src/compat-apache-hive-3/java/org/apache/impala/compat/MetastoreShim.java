@@ -73,7 +73,9 @@ import org.apache.impala.catalog.HdfsTable;
 import org.apache.impala.catalog.Hive3MetastoreShimBase;
 import org.apache.impala.catalog.MetaStoreClientPool;
 import org.apache.impala.catalog.MetaStoreClientPool.MetaStoreClient;
+import org.apache.impala.catalog.events.MetastoreEvents.AbortTxnEvent;
 import org.apache.impala.catalog.events.MetastoreEvents.MetastoreEvent;
+import org.apache.impala.catalog.events.MetastoreEvents.PseudoAbortTxnEvent;
 import org.apache.impala.catalog.events.MetastoreNotificationException;
 import org.apache.impala.catalog.events.SelfEventContext;
 import org.apache.impala.catalog.local.MetaProvider.PartitionMetadata;
@@ -649,6 +651,34 @@ public class MetastoreShim extends Hive3MetastoreShimBase {
     }
   }
 
+
+  public static class PseudoCommitTxnEvent extends MetastoreEvent {
+    public PseudoCommitTxnEvent(CommitTxnEvent event, org.apache.hadoop.hive.metastore.api.Table table, List<Long> writeIds, List<Partition> partitions) {
+      super(event.getCatalogOpExecutor(), event.getMetrics(), event.getEvent());
+      throw new UnsupportedOperationException("CommitTxnEvent is not supported.");
+    }
+
+    @Override
+    protected void process() throws MetastoreNotificationException {
+
+    }
+
+    @Override
+    protected boolean isEventProcessingDisabled() {
+      return false;
+    }
+
+    @Override
+    protected SelfEventContext getSelfEventContext() {
+      return null;
+    }
+
+    @Override
+    protected boolean shouldSkipWhenSyncingToLatestEventId() {
+      return false;
+    }
+  }
+
   /**
    * Get Access type in byte from table property
    * @param msTbl hms table
@@ -974,5 +1004,13 @@ public class MetastoreShim extends Hive3MetastoreShimBase {
     // Unsupported operation IMetaStoreClient.getAllDataConnectorNames() and
     // IMetaStoreClient.getDataConnector().
     return null;
+  }
+
+  public static List<PseudoAbortTxnEvent> getPseudoAbortTxnEvents(AbortTxnEvent event) {
+    throw new UnsupportedOperationException("Not supported.");
+  }
+
+  public static List<PseudoCommitTxnEvent> getPseudoCommitTxnEvents(CommitTxnEvent event) {
+    throw new UnsupportedOperationException("CommitTxnEvent is not supported.");
   }
 }

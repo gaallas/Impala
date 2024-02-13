@@ -36,6 +36,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
@@ -104,8 +105,10 @@ import org.apache.impala.catalog.MetaStoreClientPool.MetaStoreClient;
 import org.apache.impala.catalog.TableNotFoundException;
 import org.apache.impala.catalog.TableNotLoadedException;
 import org.apache.impala.catalog.TableWriteId;
+import org.apache.impala.catalog.events.MetastoreEvents.AbortTxnEvent;
 import org.apache.impala.catalog.events.MetastoreEvents.MetastoreEvent;
 import org.apache.impala.catalog.events.MetastoreEvents.MetastoreEventType;
+import org.apache.impala.catalog.events.MetastoreEvents.PseudoAbortTxnEvent;
 import org.apache.impala.catalog.events.MetastoreEventsProcessor;
 import org.apache.impala.catalog.events.MetastoreNotificationException;
 import org.apache.impala.catalog.events.MetastoreNotificationNeedsInvalidateException;
@@ -947,6 +950,64 @@ public class MetastoreShim extends Hive3MetastoreShimBase {
     }
   }
 
+  public static class PseudoCommitTxnEvent extends MetastoreEvent {
+    final private long txnId_;
+    org.apache.hadoop.hive.metastore.api.Table table_;
+    List<Long> writeIds_;
+    List<Partition> partitions_;
+
+    public PseudoCommitTxnEvent(CommitTxnEvent event, org.apache.hadoop.hive.metastore.api.Table table, List<Long> writeIds, List<Partition> partitions) {
+      super(event.getCatalogOpExecutor(), event.getMetrics(), event.getEvent());
+      txnId_ = event.txnId_;
+      table_ = table;
+      writeIds_ = writeIds;
+      partitions_ = partitions;
+      dbName_ = table_.getDbName();
+      tblName_ = table.getTableName();
+    }
+
+    @Override
+    protected boolean isEventProcessingDisabled() {
+      return false;
+    }
+
+    @Override
+    protected SelfEventContext getSelfEventContext() {
+      throw new UnsupportedOperationException("Self-event evaluation is not needed for "
+          + "this event type");
+    }
+
+    @Override
+    protected boolean shouldSkipWhenSyncingToLatestEventId() {
+      return false;
+    }
+
+    @Override
+    protected void process() throws MetastoreNotificationException {
+      Set<TableWriteId> committedWriteIds = catalog_.removeWriteIds(txnId_);
+      try {
+        if (table_.getPartitionKeysSize() > 0 && !MetaStoreUtils.isMaterializedViewTable(table_)) {
+          try {
+            catalogOpExecutor_.addCommittedWriteIdsAndReloadPartitionsIfExist(getEventId(), getDbName(), getTableName(),
+                writeIds_, partitions_, "Processing event id: " + getEventId() + ", event type: " + getEventType());
+          } catch (TableNotLoadedException e) {
+            debugLog("Ignoring reloading since table {} is not loaded", getTableName());
+          } catch (DatabaseNotFoundException | TableNotFoundException e) {
+            debugLog("Ignoring reloading since table {} is not found", getTableName());
+          }
+        } else {
+          catalog_.reloadTableIfExists(getDbName(), getTableName(), "CommitTxnEvent", getEventId(), /*isSkipFileMetadataReload*/false);
+        }
+        for (TableWriteId tableWriteId : committedWriteIds) {
+          catalog_.addWriteIdsToTable(tableWriteId.getDbName(), tableWriteId.getTblName(), getEventId(), Collections.singletonList(tableWriteId.getWriteId()),
+              MutableValidWriteIdList.WriteIdStatus.COMMITTED);
+        }
+      } catch (CatalogException ex) {
+        // TODO: Need to check
+      }
+    }
+  }
+
   public static void getMaterializedViewInfo(StringBuilder tableInfo, Table tbl,
        boolean isOutputPadded) {
     formatOutput("View Original Text:", tbl.getViewOriginalText(), tableInfo);
@@ -1057,5 +1118,56 @@ public class MetastoreShim extends Hive3MetastoreShimBase {
       return new DataSource(name, location, className, apiVersion);
     }
     return null;
+  }
+
+  public static List<PseudoAbortTxnEvent> getPseudoAbortTxnEvents(AbortTxnEvent event) {
+    List<PseudoAbortTxnEvent> pseudoEvents = new ArrayList<>();
+    try (MetaStoreClient client = event.getCatalogOpExecutor().getCatalog().getMetaStoreClient()) {
+      List<WriteEventInfo> writeEventInfoList = client.getHiveClient().getAllWriteEventInfo(new GetAllWriteEventInfoRequest(event.getTxnId()));
+      Map<TableName, Set<Long>> tableNameToWritdeIds = new HashMap<>();
+      for (WriteEventInfo writeEventInfo: writeEventInfoList) {
+        TableName tableName = new TableName(writeEventInfo.getDatabase(), writeEventInfo.getTable());
+        tableNameToWritdeIds.computeIfAbsent(tableName, k -> new HashSet<>()).add(writeEventInfo.getWriteId());
+      }
+      for (Map.Entry<TableName, Set<Long>> entry : tableNameToWritdeIds.entrySet()) {
+        pseudoEvents.add(new PseudoAbortTxnEvent(event, entry.getKey(), new ArrayList<Long>(entry.getValue())));
+      }
+    } catch (TException e) {
+      /* throw new MetastoreNotificationNeedsInvalidateException(debugString("Failed to "
+          + "get write event infos for txn {}. Event processing cannot continue. Issue "
+          + "an invalidate metadata command to reset event processor.", event.getTxnId()), e); */
+    }
+    return pseudoEvents;
+  }
+
+  public static List<PseudoCommitTxnEvent> getPseudoCommitTxnEvents(CommitTxnEvent event) {
+    List<PseudoCommitTxnEvent> pseudoEvents = new ArrayList<>();
+    try (MetaStoreClientPool.MetaStoreClient client = event.getCatalogOpExecutor().getCatalog().getMetaStoreClient()) {
+      List<WriteEventInfo> writeEventInfoList = client.getHiveClient().getAllWriteEventInfo(
+          new GetAllWriteEventInfoRequest(event.txnId_));
+      if (writeEventInfoList != null && !writeEventInfoList.isEmpty()) {
+        CommitTxnMessage commitTxnMessage = event.commitTxnMessage_;
+        commitTxnMessage.addWriteEventInfo(writeEventInfoList);
+        List<Long> writeIds = Collections.unmodifiableList(commitTxnMessage.getWriteIds());
+        List<Partition> parts = new ArrayList<>();
+        Map<TableName, List<Integer>> tableNameToIdxs = new HashMap<>();
+        for (int i = 0; i < writeIds.size(); i++) {
+          org.apache.hadoop.hive.metastore.api.Table tbl = commitTxnMessage.getTableObj(i);
+          TableName tableName = new TableName(tbl.getDbName(), tbl.getTableName());
+          parts.add(commitTxnMessage.getPartitionObj(i));
+          tableNameToIdxs.computeIfAbsent(tableName, k -> new ArrayList<>()).add(i);
+        }
+        for (Map.Entry<TableName, List<Integer>> entry : tableNameToIdxs.entrySet()) {
+          org.apache.hadoop.hive.metastore.api.Table tbl = commitTxnMessage.getTableObj(entry.getValue().get(0));
+          pseudoEvents.add(new PseudoCommitTxnEvent(event, tbl, entry.getValue().stream().map(i -> writeIds.get(i)).collect(Collectors.toList()), entry.getValue().stream().map(i -> parts.get(i)).collect(Collectors.toList())));
+        }
+      }
+    } catch (Exception e) {
+      // TODO: Need to check
+        /* throw new MetastoreNotificationNeedsInvalidateException(debugString("Failed to "
+            + "get write event infos for txn {}. Event processing cannot continue. Issue "
+            + "an invalidate metadata command to reset event processor.", event.txnId_), e); */
+    }
+    return pseudoEvents;
   }
 }
