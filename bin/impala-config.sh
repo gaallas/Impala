@@ -85,13 +85,13 @@ export USE_AVRO_CPP=${USE_AVRO_CPP:=false}
 # moving to a different build of the toolchain, e.g. when a version is bumped or a
 # compile option is changed. The build id can be found in the output of the toolchain
 # build jobs, it is constructed from the build number and toolchain git hash prefix.
-export IMPALA_TOOLCHAIN_BUILD_ID_AARCH64=11-8dbe785e9e
-export IMPALA_TOOLCHAIN_BUILD_ID_X86_64=380-8dbe785e9e
+export IMPALA_TOOLCHAIN_BUILD_ID_AARCH64=16-b6f9f697b6
+export IMPALA_TOOLCHAIN_BUILD_ID_X86_64=399-b6f9f697b6
 export IMPALA_TOOLCHAIN_REPO=\
-${IMPALA_TOOLCHAIN_REPO:-https://github.com/cloudera/native-toolchain.git}
-export IMPALA_TOOLCHAIN_BRANCH=${IMPALA_TOOLCHAIN_BRANCH:-master}
+${IMPALA_TOOLCHAIN_REPO:-https://github.infra.cloudera.com/laszlog/native-toolchain.git}
+export IMPALA_TOOLCHAIN_BRANCH=${IMPALA_TOOLCHAIN_BRANCH:-gtest-1.14}
 export IMPALA_TOOLCHAIN_COMMIT_HASH=\
-${IMPALA_TOOLCHAIN_COMMIT_HASH-8dbe785e9e000c665722a11068f9a4a6b454cfeb}
+${IMPALA_TOOLCHAIN_COMMIT_HASH-46f467e05405d466037f22f8d8b92013b5a08e27}
 # Compare the build ref in build IDs by removing everything up-to-and-including the
 # first hyphen.
 if [ "${IMPALA_TOOLCHAIN_BUILD_ID_AARCH64#*-}" \
@@ -250,7 +250,7 @@ if [[ $OSTYPE == "darwin"* ]]; then
   unset IMPALA_GPERFTOOLS_URL
 fi
 
-: ${IMPALA_TOOLCHAIN_HOST:=native-toolchain.s3.amazonaws.com}
+: ${IMPALA_TOOLCHAIN_HOST:=impala-toolchain-test.s3.amazonaws.com}
 export IMPALA_TOOLCHAIN_HOST
 
 export CDP_BUILD_NUMBER=45689292
