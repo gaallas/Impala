@@ -43,7 +43,7 @@ PACKAGES='g++ gcc git libsasl2-dev libssl-dev make
 if sudo apt-get install -s python-dev python-setuptools  > /dev/null 2>&1; then
   PACKAGES="${PACKAGES} python-dev python-setuptools"
 else
-  PACKAGES="${PACKAGES} python-dev-is-python3"
+  PACKAGES="${PACKAGES} python-is-python3 python-dev-is-python3"
 fi
 sudo -E apt-get --yes -s install ${PACKAGES}
 
