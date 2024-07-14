@@ -33,9 +33,17 @@ set -euxo pipefail
 # Kerberos setup would pop up dialog boxes without this
 export DEBIAN_FRONTEND=noninteractive
 sudo -E apt-get update
-sudo -E apt-get --yes install g++ gcc git libsasl2-dev libssl-dev make python-dev \
-     python-setuptools python3-dev python3-setuptools python3-venv libffi-dev \
-     libkrb5-dev krb5-admin-server krb5-kdc krb5-user libxml2-dev libxslt-dev
+
+# unversioned python-dev and python-setuptools are not available on newer releases,
+# which don't support Python 2.
+PACKAGES='g++ gcc git libsasl2-dev libssl-dev make
+     python3-dev python3-setuptools python3-venv libffi-dev
+     libkrb5-dev krb5-admin-server krb5-kdc krb5-user libxml2-dev libxslt-dev'
+
+if sudo apt-get install -s python-dev python-setuptools  > /dev/null 2>&1; then
+  PACKAGES="${PACKAGES} python-dev python-setuptools"
+fi
+sudo -E apt-get --yes -s install ${PACKAGES}
 
 source /etc/lsb-release
 
