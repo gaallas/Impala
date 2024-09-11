@@ -29,7 +29,7 @@ INSTALL_DEBUG_TOOLS=none
 JAVA_VERSION=8
 DRY_RUN=false
 PKG_LIST=""
-NON_PKG_NAMES=(apt-get yum install update)
+NON_PKG_NAMES=(apt-get yum apk install update add)
 
 function print_usage {
     echo "install_os_packages.sh - Helper script to install OS dependencies"
@@ -102,7 +102,10 @@ esac
 # for specific versions, but at the moment the distribution
 # is all we need.
 DISTRIBUTION=Unknown
-if [[ -f /etc/redhat-release ]]; then
+if [[ -f /sbin/apk && -x /sbin/apk ]]; then
+    echo "Indentified APK-based base image."
+    DISTRIBUTION=Chainguard
+elif [[ -f /etc/redhat-release ]]; then
   echo "Identified Redhat system."
   DISTRIBUTION=Redhat
 else
@@ -122,7 +125,7 @@ fi
 
 if [[ $DISTRIBUTION == Unknown ]]; then
   echo "ERROR: Did not detect supported distribution."
-  echo "Only Ubuntu and Redhat-based distributions are supported."
+  echo "Only Ubuntu and Redhat-based distributions, or Chainguard/Wolfi base images are supported."
   exit 1
 fi
 
@@ -202,6 +205,46 @@ elif [[ $DISTRIBUTION == Redhat ]]; then
         vim \
         which
   fi
+elif [[ $DISTRIBUTION == Chainguard ]]; then
+  # Package inventory:
+  # glibc-locale-en and posix-libc-utils: for locale and 'locale' tool support
+  # shadow: for groupadd and friends
+  wrap apk add --no-cache --no-interactive \
+    glibc-locale-en \
+    posix-libc-utils \
+    cyrus-sasl \
+    krb5-libs \
+    openssl \
+    openldap-dev \
+    openjdk-${JAVA_VERSION}-jre \
+    shadow \
+    tzdata
+
+  # Kludge to get Java working: the Wolfi installer assumes that /usr/lib/jvm/default-jvm
+  # is a symbolic link to the currently active Java VM installation, but fails to create
+  # it, leaving Java unaccessible. Create the symlink manually to fix Java.
+  cd /usr/lib/jvm && \
+  ln -s java-1.8-openjdk default-jvm
+
+  if [[ $INSTALL_DEBUG_TOOLS == basic || $INSTALL_DEBUG_TOOLS == full ]]; then
+    echo "Installing basic debug tools"
+    wrap apk add --no-cache --no-interactive \
+        gdb \
+        openjdk-${JAVA_VERSION}-default-jdk
+  fi
+
+  if [[ $INSTALL_DEBUG_TOOLS == full ]]; then
+    echo "Installing full debug tools"
+    wrap apk add --no-cache --no-interactive \
+        bind-tools \
+        curl \
+        iproute2 \
+        iputils \
+        less \
+        nmap \
+        sudo \
+        vim
+  fi
 fi
 
 if $DRY_RUN; then
@@ -227,9 +270,16 @@ if ! command -v pgrep ; then
   exit 1
 fi
 
+# Java must be accessible for the frontend to work. Verify that it can be found
+if ! command -v java; then
+  echo "ERROR: Java cannot be found."
+  exit 1
+fi
+
 # Impala will fail to start if the permissions on /var/tmp are not set to include
 # the sticky bit (i.e. +t). Some versions of Redhat UBI images do not have
 # this set by default, so specifically set the sticky bit for both /tmp and /var/tmp.
+mkdir -p /var/tmp
 chmod a=rwx,o+t /var/tmp /tmp
 
 # To minimize the size for the Docker image, clean up any unnecessary files.
@@ -240,3 +290,4 @@ elif [[ $DISTRIBUTION == Redhat ]]; then
   yum clean all
   rm -rf /var/cache/yum/*
 fi
+
