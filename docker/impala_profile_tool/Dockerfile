@@ -22,11 +22,17 @@ FROM ${BASE_IMAGE}
 # If set to "--install-debug-tools full", then extra utilities will be installed.
 ARG INSTALL_OS_PACKAGES_ARGS="--install-debug-tools full"
 
+ADD --chown=root:root --chmod=755 helper/install_bash_if_needed.sh /root/
+RUN /root/install_bash_if_needed.sh
+
 # Install dependencies required for Impala utility binaries to run, plus
 # some useful utilities.
 # TODO: ideally we wouldn't depend on the JVM libraries, but currently the JNI code
 # in be/ is not cleanly separated from the code that doesn't use JNI.
-ADD helper/install_os_packages.sh /root
+ADD --chown=root:root --chmod=755 helper/install_os_packages.sh /root/
+
+# RUN --mount=type=bind,source=helper/install_os_packages.sh,target=/root/os_packages.sh \
+#     /root/os_packages.sh ${INSTALL_OS_PACKAGES_ARGS}
 RUN /root/install_os_packages.sh ${INSTALL_OS_PACKAGES_ARGS}
 
 # Use a non-privileged impala user to run the processes in the container.

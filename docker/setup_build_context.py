@@ -181,6 +181,10 @@ if not found_kudu_so:
 
 # Add script for installing OS packages
 symlink_file_into_dir(
+    os.path.join(IMPALA_HOME, "docker/install_bash_if_needed.sh"), HELPER_DIR)
+
+# Add script for installing OS packages
+symlink_file_into_dir(
     os.path.join(IMPALA_HOME, "docker/install_os_packages.sh"), HELPER_DIR)
 
 if args.utility_context:

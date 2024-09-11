@@ -41,6 +41,9 @@ else
   if [[ $DISTRIB_ID == Ubuntu ]]; then
     echo "Identified Ubuntu image."
     DISTRIBUTION=Ubuntu
+  elif [[ -f /sbin/apk && -x /sbin/apk ]]; then
+    echo "Indentified APK-based base image."
+    DISTRIBUTION=Chainguard
   fi
 fi
 
@@ -77,6 +80,17 @@ elif [[ $DISTRIBUTION == Redhat ]]; then
   elif [[ -d /usr/lib/jvm/jre-1.8.0 ]]; then
     echo "Detected Java 8"
     JAVA_HOME=/usr/lib/jvm/jre-1.8.0
+  fi
+elif [[ $DISTRIBUTION == Chainguard ]]; then
+  if [[ -d /usr/lib/jvm/java-17-openjdk ]] ; then
+    echo "Detected Java 17"
+    JAVA_HOME=/usr/lib/jvm/java-17-openjdk
+  elif [[ -d /usr/lib/jvm/java-11-openjdk ]] ; then
+    echo "Detected Java 11"
+    JAVA_HOME=/usr/lib/jvm/java-11-openjdk
+  elif [[ -d /usr/lib/jvm/java-1.8-openjdk ]] ; then
+    echo "Detected Java 8"
+    JAVA_HOME=/usr/lib/jvm/java-1.8-openjdk
   fi
 fi
 
@@ -159,10 +173,11 @@ fi
 # it is present.
 if locale -a | grep en_US.utf8 ; then
   echo "en_US.utf8 is present"
-else
-  echo "ERROR: en_US.utf8 locale is not present."
+  else
+    echo "ERROR: en_US.utf8 locale is not present."
   exit 1
 fi
+
 
 # Set a UTF-8 locale to enable upper/lower/initcap functions with UTF-8 mode.
 # Use C.UTF-8 (aka C.utf8) if it is available, and fall back to en_US.utf8 if not
@@ -175,6 +190,9 @@ else
   # Presence of en_US.utf8 was verified above
   export LC_ALL=en_US.utf8
 fi
+
+export LC_ALL=C.UTF-8
+
 echo "LC_ALL: ${LC_ALL}"
 
 exec "$@"
