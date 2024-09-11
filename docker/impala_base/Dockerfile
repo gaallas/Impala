@@ -22,8 +22,16 @@ FROM ${BASE_IMAGE}
 # The level of debugging tools to install is set by the argument to  "--install-debug-tools".
 ARG INSTALL_OS_PACKAGES_ARGS="--install-debug-tools none"
 
+# Switch to root. Needed by hardened base images that don't default to the root user.
+USER root
+ADD --chown=root:root --chmod=755 helper/install_bash_if_needed.sh /root/
+RUN /root/install_bash_if_needed.sh
+
 # Install minimal dependencies required for Impala services to run.
-ADD helper/install_os_packages.sh /root
+ADD --chown=root:root --chmod=755 helper/install_os_packages.sh /root/
+
+# RUN --mount=type=bind,source=helper/install_os_packages.sh,target=/root/os_packages.sh \
+#     /root/os_packages.sh ${INSTALL_OS_PACKAGES_ARGS}
 RUN /root/install_os_packages.sh ${INSTALL_OS_PACKAGES_ARGS}
 
 # Use a non-privileged impala user to run the daemons in the container.

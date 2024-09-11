@@ -32,11 +32,19 @@ cmake_host_system_information(RESULT OS_DISTRIB_VERSION_ID QUERY DISTRIB_VERSION
 set(QUICKSTART_BASE_IMAGE "UNSUPPORTED")
 set(DISTRO_BASE_IMAGE "UNSUPPORTED")
 
+MESSAGE(STATUS "OS_DISTRIB_ID is: ${OS_DISTRIB_ID}")
+MESSAGE(STATUS "OS_DISTRIB_VERSION_ID is: ${OS_DISTRIB_VERSION_ID}")
+
 # The CMake variables are using information from /etc/os-release.
 # A database of /etc/os-release files is available at
 # https://github.com/chef/os_release
 # These comparisons are based on those values.
-if(${OS_DISTRIB_ID} STREQUAL "ubuntu")
+# Hardened base image is selected by the IMPALA_USE_HARDENED_BASE_IMAGE environment variable
+if( "$ENV{IMPALA_USE_HARDENED_BASE_IMAGE}" STREQUAL true )
+  set(DISTRO_BASE_IMAGE "$ENV{IMPALA_HARDENED_DOCKER_BASE}")
+  # We never publish a QuickStart image on a hardened base, so don't set QUICKSTART_BASE_IMAGE.
+  MESSAGE(STATUS "Picked hardened base image based on host OS or environment variable: ${DISTRO_BASE_IMAGE}")
+elseif(${OS_DISTRIB_ID} STREQUAL "ubuntu")
   if(${OS_DISTRIB_VERSION_ID} STREQUAL "16.04" OR
      ${OS_DISTRIB_VERSION_ID} STREQUAL "18.04" OR
      ${OS_DISTRIB_VERSION_ID} STREQUAL "20.04" OR
@@ -90,7 +98,7 @@ if (NOT ${DISTRO_BASE_IMAGE} STREQUAL "UNSUPPORTED")
       # dependencies.
       COMMAND tar cvh . -C ${CMAKE_SOURCE_DIR}/docker/impala_base/ . |
               ${DOCKER_BUILD} -t impala_base_${build_type}
-                --build-arg BASE_IMAGE=${DISTRO_BASE_IMAGE}
+	              --build-arg BASE_IMAGE=${DISTRO_BASE_IMAGE}
                 --build-arg INSTALL_OS_PACKAGES_ARGS=${install_os_packages_args} -
       WORKING_DIRECTORY ${IMPALA_BASE_BUILD_CONTEXT_DIR}/${build_type}
       DEPENDS impala_base_build_context_${build_type} ${CMAKE_SOURCE_DIR}/docker/impala_base/Dockerfile
