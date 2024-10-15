@@ -187,9 +187,16 @@ elif [[ $DISTRIBUTION == Redhat ]]; then
 
   if [[ $INSTALL_DEBUG_TOOLS == full ]]; then
     echo "Installing full debug tools"
+    REDHAT_CURL_PACKAGE=curl
+    # Redhat 8 and 9 come with curl-minimal preinstalled, which conflicts with the
+    # full curl package. Leave curl-minimal in the environment.
+    if ! grep 'release 7\.' /etc/redhat-release; then
+      REDHAT_CURL_PACKAGE=curl-minimal
+    fi
+
     wrap yum install -y --disableplugin=subscription-manager \
         bind-utils \
-        curl \
+        ${REDHAT_CURL_PACKAGE} \
         iproute \
         iputils \
         less \
