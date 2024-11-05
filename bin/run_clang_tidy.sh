@@ -30,8 +30,12 @@
 set -euo pipefail
 
 TMP_BUILDALL_LOG=$(mktemp)
+
+trap "rm -f ${TMP_BUILDALL_LOG}" EXIT
+
 echo "Compiling, for build logs see ${TMP_BUILDALL_LOG}"
-if ! ./buildall.sh -skiptests -tidy -so -noclean &> "${TMP_BUILDALL_LOG}"
+# if ! ./buildall.sh -skiptests -tidy -so -noclean &> "${TMP_BUILDALL_LOG}"
+if ! ./buildall.sh -skiptests -tidy -so -noclean
 then
   echo "buildall.sh failed!" >&2
   grep "^make.* Error " ${TMP_BUILDALL_LOG} >&2
