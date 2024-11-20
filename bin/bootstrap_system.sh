@@ -241,7 +241,7 @@ ubuntu apt-get --yes install ccache curl file gawk g++ gcc apt-utils git libffi-
 # Regular python packages don't exist on Ubuntu 22. Everything is Python 3.
 ubuntu16 apt-get --yes install python python-dev python-setuptools
 ubuntu18 apt-get --yes install python python-dev python-setuptools
-ubuntu20 apt-get --yes install python python-dev python-setuptools
+ubuntu20 apt-get --yes install python=2.7.18-1~20.04.4 python-dev=2.7.18-1~20.04.4 python-setuptools
 
 # Required by Kudu in the minicluster
 ubuntu20 apt-get --yes install libtinfo5
