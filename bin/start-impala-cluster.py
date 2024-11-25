@@ -1003,13 +1003,25 @@ class DockerMiniClusterOperations(object):
     # for config changes to take effect.
     conf_dir = os.path.join(IMPALA_HOME, "fe/src/test/resources/")
     mount_args = ["--mount", "type=bind,src={0},dst=/opt/impala/conf".format(conf_dir)]
-
     # Collect container logs in a unique subdirectory per daemon to avoid any potential
     # interaction between containers, which should be isolated.
     log_dir = os.path.join(IMPALA_HOME, options.log_dir, host_name)
     if not os.path.isdir(log_dir):
       os.makedirs(log_dir)
     mount_args += ["--mount", "type=bind,src={0},dst=/opt/impala/logs".format(log_dir)]
+    # Add entries to the container's /etc/hosts file for the Docker host and the
+    # gateway from the container to the host. These are needed for stable reverse
+    # name resolution of the host's and the gateway's IP addresses
+    # The local host's name is governed by convention, see
+    # https://docs.docker.com/reference/cli/docker/container/run/#add-host
+    local_host_arg = ["--add-host=host.docker.internal:host-gateway"]
+    # The gateway's address is stored as the INTERNAL_LISTEN_HOST environment variable,
+    # prepared by docker/configure_test_network.sh
+    # Add it only if it exists
+    internal_listen_host = os.environ["INTERNAL_LISTEN_HOST"]
+    local_gateway_arg = None
+    if internal_listen_host:
+      local_gateway_arg = ["--add-host=gateway.internal:{0}".format(internal_listen_host)]
 
     # Create a data cache subdirectory for each daemon and mount at /opt/impala/cache
     # in the container.
@@ -1032,6 +1044,7 @@ class DockerMiniClusterOperations(object):
     LOG.info("Running container {0}".format(container_name))
     run_cmd = (["docker", "run", "-d"] + env_args + port_args + user_args + ["--network",
       self.network_name, "--name", container_name, "--network-alias", host_name] +
+      local_host_arg + local_gateway_arg +
       timezone_args +
       mount_args + mem_limit_args + [image_tag] + args)
     LOG.info("Running command {0}".format(run_cmd))
