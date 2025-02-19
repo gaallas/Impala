@@ -296,7 +296,7 @@ export IMPALA_REDHAT7_DOCKER_BASE=${IMPALA_REDHAT7_DOCKER_BASE:-"centos:centos7.
 export IMPALA_REDHAT8_DOCKER_BASE=${IMPALA_REDHAT8_DOCKER_BASE:-"rockylinux:8.5"}
 export IMPALA_REDHAT9_DOCKER_BASE=${IMPALA_REDHAT9_DOCKER_BASE:-"rockylinux:9.2"}
 export IMPALA_HARDENED_DOCKER_BASE=${IMPALA_HARDENED_DOCKER_BASE:-"cgr.dev/chainguard/wolfi-base:latest"}
-export IMPALA_USE_HARDENED_BASE_IMAGE=${IMPALA_USE_HARDENED_BASE_IMAGE:-false}
+export IMPALA_USE_HARDENED_BASE_IMAGE=${IMPALA_USE_HARDENED_BASE_IMAGE:-true}
 
 # Selects the version of Java to use when start-impala-cluster.py starts with container
 # images (created via e.g. 'make docker_debug_java11_images'). The Java version used in
