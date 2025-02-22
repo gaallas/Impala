@@ -197,6 +197,8 @@ class SkipIfDockerizedCluster:
       IS_DOCKERIZED_TEST_CLUSTER, reason="Test require high per-process mem_limit.")
   runs_slowly = pytest.mark.skipif(
       IS_DOCKERIZED_TEST_CLUSTER, reason="Dockerized env too slow for test.")
+  chainguard_utf8 = pytest.mark.skipif(
+      IS_DOCKERIZED_TEST_CLUSTER, reason="UTF-8 tests crash impalad.")
   jira = partial(pytest.mark.skipif, IS_DOCKERIZED_TEST_CLUSTER)
 
 

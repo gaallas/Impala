@@ -20,7 +20,7 @@ from tests.common.impala_test_suite import ImpalaTestSuite
 from tests.common.test_dimensions import (create_exec_option_dimension,
     create_client_protocol_dimension, hs2_parquet_constraint)
 
-
+@SkipIfDockerizedCluster.chainguard_utf8
 class TestUtf8StringFunctions(ImpalaTestSuite):
   @classmethod
   def get_workload(cls):
