@@ -223,7 +223,7 @@ elif [[ $DISTRIBUTION == Chainguard ]]; then
     krb5-libs \
     krb5 \
     openssl \
-    openldap-dev \
+    openldap \
     openjdk-${JAVA_VERSION}-jre \
     openjdk-${JAVA_VERSION}-default-jvm \
     shadow \
