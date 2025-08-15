@@ -85,4 +85,4 @@ if ! bin/jenkins/populate_m2_directory.py ; then
   echo "Failed to prepopulate the m2 directory. Continuing..."
 fi
 
-./buildall.sh -notests -so
+./buildall.sh -skiptests -so
