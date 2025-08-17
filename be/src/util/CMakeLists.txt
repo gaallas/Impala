@@ -166,6 +166,12 @@ SET_SOURCE_FILES_PROPERTIES(${SQUEASEL_SRC_DIR}/squeasel.c
 SET_SOURCE_FILES_PROPERTIES(${SQUEASEL_SRC_DIR}/squeasel.c
   PROPERTIES COMPILE_FLAGS -DUSE_IPV6)
 
+# webserver-test.cc uses the platform's definition of pclose(), which includes
+# attributes on Ubuntu 24.04. This causes GCC to emit the warning
+# 'attributes ignored on template arguments', which turns into an error, breaking the build.
+SET_SOURCE_FILES_PROPERTIES(webserver-test.cc
+  PROPERTIES COMPILE_FLAGS -Wno-ignored-attributes)
+
 # shared library which provides native logging support to JVMs over JNI.
 add_library(loggingsupport SHARED
   logging-support.cc
