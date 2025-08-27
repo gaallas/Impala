@@ -81,13 +81,13 @@ export USE_AVRO_CPP=${USE_AVRO_CPP:=false}
 # moving to a different build of the toolchain, e.g. when a version is bumped or a
 # compile option is changed. The build id can be found in the output of the toolchain
 # build jobs, it is constructed from the build number and toolchain git hash prefix.
-export IMPALA_TOOLCHAIN_BUILD_ID_AARCH64=37-3d9098d159
-export IMPALA_TOOLCHAIN_BUILD_ID_X86_64=55-3d9098d159
+export IMPALA_TOOLCHAIN_BUILD_ID_AARCH64=118-3833faf9b4
+export IMPALA_TOOLCHAIN_BUILD_ID_X86_64=562-3833faf9b4
 export IMPALA_TOOLCHAIN_REPO=\
 ${IMPALA_TOOLCHAIN_REPO:-https://github.infra.cloudera.com/laszlog/impala.git}
 export IMPALA_TOOLCHAIN_BRANCH=${IMPALA_TOOLCHAIN_BRANCH:-ubuntu24-awscliv2-binutils-combined}
 export IMPALA_TOOLCHAIN_COMMIT_HASH=\
-${IMPALA_TOOLCHAIN_COMMIT_HASH-3d9098d159b1068bb8d8b5ebf573180e5e2fd618}
+${IMPALA_TOOLCHAIN_COMMIT_HASH-3833faf9b442003dd822e147399abc2510a26b04}
 # Compare the build ref in build IDs by removing everything up-to-and-including the
 # first hyphen.
 if [ "${IMPALA_TOOLCHAIN_BUILD_ID_AARCH64#*-}" \
