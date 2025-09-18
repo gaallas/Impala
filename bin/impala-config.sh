@@ -81,13 +81,13 @@ export USE_AVRO_CPP=${USE_AVRO_CPP:=false}
 # moving to a different build of the toolchain, e.g. when a version is bumped or a
 # compile option is changed. The build id can be found in the output of the toolchain
 # build jobs, it is constructed from the build number and toolchain git hash prefix.
-export IMPALA_TOOLCHAIN_BUILD_ID_AARCH64=126-264503de7e
-export IMPALA_TOOLCHAIN_BUILD_ID_X86_64=568-264503de7e
+export IMPALA_TOOLCHAIN_BUILD_ID_AARCH64=127-3dcdec7f50
+export IMPALA_TOOLCHAIN_BUILD_ID_X86_64=569-3dcdec7f50
 export IMPALA_TOOLCHAIN_REPO=\
 ${IMPALA_TOOLCHAIN_REPO:-https://github.com/cloudera/native-toolchain.git}
 export IMPALA_TOOLCHAIN_BRANCH=${IMPALA_TOOLCHAIN_BRANCH:-master}
 export IMPALA_TOOLCHAIN_COMMIT_HASH=\
-${IMPALA_TOOLCHAIN_COMMIT_HASH-264503de7ee132bba093c6cd0f1d309c2e10ca94}
+${IMPALA_TOOLCHAIN_COMMIT_HASH-3dcdec7f50da4ee39fe2135c303397842e5a3776}
 # Compare the build ref in build IDs by removing everything up-to-and-including the
 # first hyphen.
 if [ "${IMPALA_TOOLCHAIN_BUILD_ID_AARCH64#*-}" \
