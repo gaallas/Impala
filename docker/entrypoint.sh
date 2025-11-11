@@ -88,8 +88,9 @@ function build() {
   if [[ $TEST_TEST_WITH_DOCKER ]]; then
     # We sleep busily so that CPU metrics will show usage, to
     # better exercise the timeline code.
-    echo sleeping busily for 4 seconds
-    bash -c 'while [[ $SECONDS -lt 4 ]]; do :; done'
+    # Source CPU workload functions
+    source "$(dirname "$0")/cpu_workloads.sh"
+    cpu_workload_build 8
     return
   fi
 
@@ -384,8 +385,10 @@ function test_suite() {
 
   # These test suites are for testing.
   if [[ $1 == NOOP ]]; then
-    # Sleep busily for 10 seconds.
-    bash -c 'while [[ $SECONDS -lt 10 ]]; do :; done'
+    # High CPU load for 12 seconds.
+    # Source CPU workload functions
+    source "$(dirname "$0")/cpu_workloads.sh"
+    cpu_workload_test 12
     return 0
   fi
   if [[ $1 == NOOP_FAIL ]]; then
@@ -412,7 +415,8 @@ function test_suite() {
 
   # Build the BE test binaries if needed.
   if [[ $1 = BE_TEST* ]]; then
-    make -j$(nproc) --load-average=$(nproc) be-test be-benchmarks
+    make -j${IMPALA_BUILD_THREADS:-$(nproc)} \
+         --load-average=${IMPALA_BUILD_THREADS:-$(nproc)} be-test be-benchmarks
   fi
 
   if [[ $1 == RAT_CHECK ]]; then
@@ -545,6 +549,11 @@ function main() {
     exit 1
   fi
 
+  sleep 0.1
+  # Small delay to ensure Docker attach is ready in test mode
+  if [[ $TEST_TEST_WITH_DOCKER ]]; then
+    sleep 0.2
+  fi
   echo ">>> ${CMD} $@ (begin)"
   # Dump environment, for debugging
   env | grep -vE "AWS_(SECRET_)?ACCESS_KEY"

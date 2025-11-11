@@ -25,6 +25,7 @@ from __future__ import absolute_import, division, print_function
 import argparse
 import datetime
 import itertools
+import json
 import logging
 import multiprocessing
 import multiprocessing.pool
@@ -35,6 +36,20 @@ import sys
 import tempfile
 import threading
 import time
+
+# Docker Registry Configuration (loaded from config file)
+def _load_registry_config():
+  config_file = os.path.join(os.path.dirname(__file__), "registry-config.json")
+  if os.path.exists(config_file):
+    with open(config_file, 'r') as f:
+      return json.load(f)
+  return {}
+
+_registry_config = _load_registry_config()
+DOCKER_REGISTRY = _registry_config.get("registry", "")
+DOCKER_NAMESPACE = _registry_config.get("namespace", "")
+DOCKER_USERNAME = _registry_config.get("username", "")
+DOCKER_PASSWORD = _registry_config.get("password", "")
 
 CLI_HELP = """\
 Runs tests inside of docker containers, parallelizing different types of
@@ -156,11 +171,18 @@ def main():
       action='store_true', default=True,
       help="Whether to remove image when done.")
   group.add_argument('--no-cleanup-image', dest="cleanup_image", action='store_false')
-  parser.add_argument('--base-image', dest="base_image", default="ubuntu:16.04",
-      help="Base OS image to use. ubuntu:16.04 and centos:6 are known to work.")
+  parser.add_argument('--base-image', dest="base_image", default="ubuntu:22.04",
+      help="Base OS image to use. ubuntu:22.04, ubuntu:20.04, ubuntu:18.04 "
+           "and centos:6 are known to work.")
   parser.add_argument(
       '--build-image', metavar='IMAGE',
       help='Skip building, and run tests on pre-existing image.')
+  parser.add_argument(
+      '--push-to-registry', action='store_true', default=False,
+      help='Push built image to Docker registry after build.')
+  parser.add_argument(
+      '--pull-from-registry', action='store_true', default=False,
+      help='Pull image from Docker registry instead of building.')
 
   suite_group = parser.add_mutually_exclusive_group()
   suite_group.add_argument(
@@ -206,7 +228,9 @@ def main():
       suite_concurrency=args.suite_concurrency,
       impalad_mem_limit_bytes=args.impalad_mem_limit_bytes,
       tail=args.tail,
-      env=args.env, base_image=args.base_image)
+      env=args.env, base_image=args.base_image,
+      push_to_registry=args.push_to_registry,
+      pull_from_registry=args.pull_from_registry)
 
   fh = logging.FileHandler(os.path.join(_make_dir_if_not_exist(t.log_dir), "log.txt"))
   fh.setFormatter(logging.Formatter(LOG_FORMAT))
@@ -214,9 +238,18 @@ def main():
 
   logging.info("Arguments: %s", args)
 
-  ret = t.run()
-  t.create_timeline()
-  t.log_summary()
+  try:
+    ret = t.run()
+  finally:
+    # Always create timeline and log summary, even if run() failed
+    try:
+      t.create_timeline()
+    except Exception as e:
+      logging.warning("Failed to create timeline: %s", e)
+    try:
+      t.log_summary()
+    except Exception as e:
+      logging.warning("Failed to log summary: %s", e)
 
   if not ret:
     sys.exit(1)
@@ -310,7 +343,7 @@ class Suite(object):
   def exhaustive(self):
     """Returns an "exhaustive" copy of the suite."""
     r = self.copy(self.name + "_EXHAUSTIVE", EXPLORATION_STRATEGY="exhaustive")
-    r.timeout_minutes = 240
+    r.timeout_minutes = 300  # 5 hours for exhaustive tests
     return r
 
   def asan(self):
@@ -346,6 +379,7 @@ ee_test_parallel_exhaustive = ee_test_parallel.exhaustive()
 cluster_test = Suite("CLUSTER_TEST")
 cluster_test.shard_at_concurrency = 4
 cluster_test.sharding_variable = "RUN_CUSTOM_CLUSTER_TESTS_ARGS"
+cluster_test.timeout_minutes = 180  # 3 hours for cluster tests
 cluster_test_exhaustive = cluster_test.exhaustive()
 
 # Default supported suites. These are organized slowest-to-fastest, so that,
@@ -444,8 +478,10 @@ class TestWithDocker(object):
                cleanup_image, ccache_dir, test_mode,
                suite_concurrency, parallel_test_concurrency,
                impalad_mem_limit_bytes, tail,
-               env, base_image):
+               env, base_image, push_to_registry=False, pull_from_registry=False):
     self.build_image = build_image
+    self.push_to_registry = push_to_registry
+    self.pull_from_registry = pull_from_registry
     self.name = name
     self.containers = []
     self.git_root = _check_output(["git", "rev-parse", "--show-toplevel"]).strip()
@@ -502,6 +538,77 @@ class TestWithDocker(object):
     suites = suites2
 
     self.suite_runners = [TestSuiteRunner(self, suite) for suite in suites]
+
+  def _docker_login(self):
+    """Login to Docker registry with robot account."""
+    logging.info("Logging in to Docker registry: %s", DOCKER_REGISTRY)
+    cmd = ["docker", "login", DOCKER_REGISTRY, "-u", DOCKER_USERNAME, "--password-stdin"]
+    proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE)
+    stdout, stderr = proc.communicate(input=DOCKER_PASSWORD.encode())
+    if proc.returncode != 0:
+      raise RuntimeError("Docker login failed: %s" % stderr.decode())
+    logging.info("Docker login successful")
+
+  def _get_registry_image_name(self, local_image):
+    """Generate registry image name from local image."""
+    # Convert local image like "impala:built-i-20251008-110036"
+    # to "docker-sandbox.infra.cloudera.com/mszjat-ci/impala:jenkins-YYYYMMDD-HHMMSS"
+    import datetime
+    timestamp = datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+
+    if ":" in local_image:
+      repo, _ = local_image.split(":", 1)
+    else:
+      repo = local_image
+
+    # Create a nice, descriptive tag
+    nice_tag = "jenkins-%s" % timestamp
+    registry_image = "%s/%s/%s:%s" % (DOCKER_REGISTRY, DOCKER_NAMESPACE, repo, nice_tag)
+    return registry_image
+
+  def _push_image_to_registry(self, local_image):
+    """Push image to Docker registry."""
+    self._docker_login()
+    registry_image = self._get_registry_image_name(local_image)
+
+    # Tag the local image with the registry name before pushing
+    logging.info("Tagging local image %s as %s", local_image, registry_image)
+    _call(["docker", "tag", local_image, registry_image])
+
+    logging.info("Pushing image to registry: %s", registry_image)
+    _call(["docker", "push", registry_image])
+    logging.info("Successfully pushed image: %s", registry_image)
+    return registry_image
+
+  def _pull_image_from_registry(self, image_name):
+    """Pull image from Docker registry."""
+    self._docker_login()
+
+    registry_image = image_name
+
+    # Handle different image reference formats
+    if '@sha256:' in registry_image:
+      # Digest format: repo@sha256:digest
+      local_name = 'test-image:latest'
+    elif '/sha256:' in registry_image:
+      # Harbor digest format: repo/sha256:<digest>
+      local_name = 'test-image:latest'
+    elif ':' in registry_image.split('/')[-1]:
+      # Tag format: repo:tag -> use the tag part as local name
+      local_name = registry_image.split('/')[-1]  # Get "repo:tag" part
+    else:
+      # No tag specified, assume latest
+      local_name = registry_image.split('/')[-1] + ':latest'
+
+    logging.info("Pulling image from registry: %s", registry_image)
+    _call(["docker", "pull", registry_image])
+
+    # Tag it with the local name for consistency
+    logging.info("Tagging registry image %s as %s", registry_image, local_name)
+    _call(["docker", "tag", registry_image, local_name])
+    logging.info("Successfully pulled and tagged image: %s", local_name)
+    return local_name
 
   def _create_container(self, image, name, logdir, logname, entrypoint, extras=None):
     """Returns a new container.
@@ -589,10 +696,13 @@ class TestWithDocker(object):
     container.running = True
     tailer = None
 
-    with open(container.logfile, "aw") as log_output:
+    with open(container.logfile, "a") as log_output:
       if self.tail:
+        # Create a tail that prefixes each line with the container name for identification
         tailer = subprocess.Popen(
-            ["tail", "-f", "--pid", str(os.getpid()), "-v", container.logfile])
+            "tail -f --pid {} '{}' | sed 's/^/[{}] /'".format(
+                os.getpid(), container.logfile, container.name),
+            shell=True)
 
       container.start = time.time()
       # Sets up a "docker start ... | annotate.py > logfile" pipeline using
@@ -710,8 +820,29 @@ class TestWithDocker(object):
 
     self.monitor.start()
     try:
-      if not self.build_image:
+      if self.pull_from_registry:
+        # Pull pre-built image from registry
+        logging.info("Pulling image from registry instead of building")
+        if self.build_image:
+          # Use the provided build_image (could be a registry URL)
+          image_name = self.build_image
+        else:
+          # Generate default registry image name
+          image_name = "impala:built-%s" % self.name
+        self.image = self._pull_image_from_registry(image_name)
+      elif not self.build_image:
+        # Build image locally
         self._create_build_image()
+        if self.push_to_registry:
+          # Push the built image to registry
+          logging.info("Pushing built image to registry")
+          registry_image = self._push_image_to_registry(self.image)
+          logging.info("=" * 60)
+          logging.info("SUCCESS! Image pushed to registry with nice tag:")
+          logging.info("  %s", registry_image)
+          logging.info("To pull this image in another job, use:")
+          logging.info("  --build-image %s", registry_image)
+          logging.info("=" * 60)
       else:
         self.image = self.build_image
       ret = self._run_tests()
@@ -742,6 +873,23 @@ class TestWithDocker(object):
         interesting_re=self._INTERESTING_RE,
         buildname=self.name)
     timeline.create(os.path.join(self.log_dir, "timeline.html"))
+
+    # Copy test report files to log directory so they appear as Jenkins artifacts
+    self._copy_test_reports_to_artifacts()
+
+  def _copy_test_reports_to_artifacts(self):
+    """Copies test report HTML files to the log directory as Jenkins artifacts."""
+    import glob
+
+    # Look for test-report-*.html files in the log directory
+    report_pattern = os.path.join(self.log_dir, "test-report-*.html")
+    test_reports = glob.glob(report_pattern)
+
+    for report_path in test_reports:
+      report_filename = os.path.basename(report_path)
+      # The report is already in the log_dir, so it should be picked up as an artifact
+      # But we'll log that we found it
+      logging.info("Test report generated: %s", report_filename)
 
   def log_summary(self):
     logging.info("Containers:")

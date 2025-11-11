@@ -135,6 +135,27 @@ function drawChart() {
   };
   chart.draw(dataTable, options);
 
+  // ========================================
+  // CPU USAGE SECTION
+  // ========================================
+  
+  // Create section header
+  var cpuSectionHeader = document.createElement('h2');
+  cpuSectionHeader.textContent = 'CPU Usage';
+  cpuSectionHeader.style.marginTop = '30px';
+  cpuSectionHeader.style.color = '#333';
+  cpuSectionHeader.style.borderBottom = '2px solid #007acc';
+  cpuSectionHeader.style.paddingBottom = '5px';
+  lineChartContainer.appendChild(cpuSectionHeader);
+  
+  // Container CPU charts
+  var containerCpuHeader = document.createElement('h3');
+  containerCpuHeader.textContent = 'Containers';
+  containerCpuHeader.style.color = '#555';
+  containerCpuHeader.style.marginTop = '20px';
+  containerCpuHeader.style.marginBottom = '10px';
+  lineChartContainer.appendChild(containerCpuHeader);
+  
   for (const k of Object.keys(data.metrics)) {
     var lineChart = document.createElement("div");
     lineChartContainer.appendChild(lineChart);
@@ -147,6 +168,7 @@ function drawChart() {
     for (const row of data.metrics[k]) {
       dataTable.addRow([ ts_to_hms(row[0]), row[1], row[2] ]);
     }
+    
     // De-clutter the timeline labels: Slice off the common prefix of the build name
     var title = k.slice(commonPrefix);
     if (title == "") title = ' -- ';
@@ -157,16 +179,326 @@ function drawChart() {
         minValue: [0, 0, 0],
         maxValue: ts_to_hms(data.max_ts)
       },
-      // Stretch the CPU graph a bit wider than the default
+      vAxis: {
+        title: 'CPU Usage (%)'
+      },
       chartArea: {width: '95%'},
+      backgroundColor: '#f8f9fa'
     };
 
     var chart = new google.visualization.LineChart(lineChart);
     chart.draw(dataTable, options);
+  }
+  
+  // Host CPU chart
+  var hostCpuHeader = document.createElement('h3');
+  hostCpuHeader.textContent = 'Host';
+  hostCpuHeader.style.color = '#555';
+  hostCpuHeader.style.marginTop = '20px';
+  hostCpuHeader.style.marginBottom = '10px';
+  lineChartContainer.appendChild(hostCpuHeader);
+  
+  if (data.host_cpu && data.host_cpu.length > 0) {
+    var hostCpuChart = document.createElement('div');
+    hostCpuChart.id = 'hostCpuChart';
+    lineChartContainer.appendChild(hostCpuChart);
+    
+    var hostCpuDataTable = new google.visualization.DataTable();
+    hostCpuDataTable.addColumn({ type: 'timeofday', label: 'Time', id: 'Time' });
+    hostCpuDataTable.addColumn({ type: 'number', label: 'User (%)', id: 'HostCpuUser' });
+    hostCpuDataTable.addColumn({ type: 'number', label: 'System (%)', id: 'HostCpuSystem' });
+    
+    for (const row of data.host_cpu) {
+      hostCpuDataTable.addRow([ ts_to_hms(row[0]), row[1], row[2] ]);
+    }
+    
+    var hostCpuOptions = {
+      title: 'Host CPU Usage',
+      legend: { position: 'bottom' },
+      hAxis: {
+        minValue: [0, 0, 0],
+        maxValue: ts_to_hms(data.max_ts),
+        title: 'Time'
+      },
+      vAxis: {
+        title: 'CPU Usage (%)',
+        format: '#.## %'
+      },
+      chartArea: {width: '95%'},
+      colors: ['#1f77b4', '#ff7f0e'],  // Blue for user, orange for system
+      backgroundColor: '#f8f9fa'
+    };
+    
+    var hostCpuChartObj = new google.visualization.LineChart(hostCpuChart);
+    hostCpuChartObj.draw(hostCpuDataTable, hostCpuOptions);
+  }
+  
+  // ========================================
+  // MEMORY USAGE SECTION  
+  // ========================================
+  
+  // Create section header
+  var memorySectionHeader = document.createElement('h2');
+  memorySectionHeader.textContent = 'Memory Usage';
+  memorySectionHeader.style.marginTop = '40px';
+  memorySectionHeader.style.color = '#333';
+  memorySectionHeader.style.borderBottom = '2px solid #28a745';
+  memorySectionHeader.style.paddingBottom = '5px';
+  lineChartContainer.appendChild(memorySectionHeader);
+  
+  // Container Memory charts
+  var containerMemoryHeader = document.createElement('h3');
+  containerMemoryHeader.textContent = 'Containers';
+  containerMemoryHeader.style.color = '#555';
+  containerMemoryHeader.style.marginTop = '20px';
+  containerMemoryHeader.style.marginBottom = '10px';
+  lineChartContainer.appendChild(containerMemoryHeader);
+  
+  for (const k of Object.keys(data.metrics)) {
+    // Create memory chart data table
+    var memoryDataTable = new google.visualization.DataTable();
+    memoryDataTable.addColumn({ type: 'timeofday', label: 'Time', id: 'Time' });
+    memoryDataTable.addColumn({ type: 'number', label: 'Memory (MB)', id: 'Memory' });
+
+    for (const row of data.metrics[k]) {
+      if (row.length > 3) {  // Check if memory data is available
+        memoryDataTable.addRow([ ts_to_hms(row[0]), row[3] ]);
+      }
+    }
+    
+    // Create memory chart if memory data is available
+    if (memoryDataTable.getNumberOfRows() > 0) {
+      var memoryChart = document.createElement('div');
+      memoryChart.id = 'memoryChart' + k;
+      lineChartContainer.appendChild(memoryChart);
+      
+      // De-clutter the timeline labels: Slice off the common prefix of the build name
+      var title = k.slice(commonPrefix);
+      if (title == "") title = ' -- ';
+      
+      var memoryOptions = {
+        title: 'Memory: ' + title,
+        legend: { position: 'bottom' },
+        hAxis: {
+          minValue: [0, 0, 0],
+          maxValue: ts_to_hms(data.max_ts)
+        },
+        vAxis: {
+          title: 'Memory (MB)'
+        },
+        chartArea: {width: '95%'},
+        colors: ['#ff6600'],
+        backgroundColor: '#f8f9fa'
+      };
+      
+      var memoryChartObj = new google.visualization.LineChart(memoryChart);
+      memoryChartObj.draw(memoryDataTable, memoryOptions);
+    }
+  }
+  
+  // Host Memory chart
+  var hostMemoryHeader = document.createElement('h3');
+  hostMemoryHeader.textContent = 'Host';
+  hostMemoryHeader.style.color = '#555';
+  hostMemoryHeader.style.marginTop = '20px';
+  hostMemoryHeader.style.marginBottom = '10px';
+  lineChartContainer.appendChild(hostMemoryHeader);
+  
+  if (data.host_memory && data.host_memory.length > 0) {
+    var hostMemoryChart = document.createElement('div');
+    hostMemoryChart.id = 'hostMemoryChart';
+    lineChartContainer.appendChild(hostMemoryChart);
+    
+    var hostMemoryDataTable = new google.visualization.DataTable();
+    hostMemoryDataTable.addColumn({ type: 'timeofday', label: 'Time', id: 'Time' });
+    hostMemoryDataTable.addColumn({ type: 'number', label: 'Host Memory (GB)', id: 'HostMemory' });
+    
+    for (const row of data.host_memory) {
+      hostMemoryDataTable.addRow([ ts_to_hms(row[0]), row[1] ]);
+    }
+    
+    var hostMemoryOptions = {
+      title: 'Host Memory Usage',
+      legend: { position: 'bottom' },
+      hAxis: {
+        minValue: [0, 0, 0],
+        maxValue: ts_to_hms(data.max_ts),
+        title: 'Time'
+      },
+      vAxis: {
+        title: 'Memory (GB)',
+        format: '#.## GB'
+      },
+      chartArea: {width: '95%'},
+      colors: ['#9932cc'],  // Purple color to distinguish from other charts
+      backgroundColor: '#f8f9fa'
+    };
+    
+    var hostMemoryChartObj = new google.visualization.LineChart(hostMemoryChart);
+    hostMemoryChartObj.draw(hostMemoryDataTable, hostMemoryOptions);
+  }
+  
+  // ========================================
+  // DISK USAGE SECTION  
+  // ========================================
+  
+  // Create section header
+  var diskSectionHeader = document.createElement('h2');
+  diskSectionHeader.textContent = 'Disk Usage';
+  diskSectionHeader.style.marginTop = '40px';
+  diskSectionHeader.style.color = '#333';
+  diskSectionHeader.style.borderBottom = '2px solid #dc3545';
+  diskSectionHeader.style.paddingBottom = '5px';
+  lineChartContainer.appendChild(diskSectionHeader);
+  
+  // Container Disk charts
+  var containerDiskHeader = document.createElement('h3');
+  containerDiskHeader.textContent = 'Containers';
+  containerDiskHeader.style.color = '#555';
+  containerDiskHeader.style.marginTop = '20px';
+  containerDiskHeader.style.marginBottom = '10px';
+  lineChartContainer.appendChild(containerDiskHeader);
+  
+  // Create container disk usage charts
+  for (const containerName in data.metrics) {
+    const containerMetrics = data.metrics[containerName];
+    if (containerMetrics.length === 0) continue;
+    
+    // Check if we have disk data (5th element in metrics array)
+    const hasDiskData = containerMetrics.some(row => row.length > 4 && row[4] !== undefined && row[4] > 0);
+    
+    if (hasDiskData) {
+      var containerDiskChart = document.createElement('div');
+      containerDiskChart.id = containerName + 'DiskChart';
+      lineChartContainer.appendChild(containerDiskChart);
+      
+      var containerDiskDataTable = new google.visualization.DataTable();
+      containerDiskDataTable.addColumn({ type: 'timeofday', label: 'Time', id: 'Time' });
+      containerDiskDataTable.addColumn({ type: 'number', label: containerName + ' Disk (MB)', id: 'ContainerDisk' });
+      
+      for (const row of containerMetrics) {
+        if (row.length > 4 && row[4] !== undefined) {
+          containerDiskDataTable.addRow([ ts_to_hms(row[0]), row[4] ]);
+        }
+      }
+      
+      // De-clutter the timeline labels: Slice off the common prefix of the build name
+      var title = containerName.slice(commonPrefix);
+      if (title == "") title = ' -- ';
+      
+      var containerDiskOptions = {
+        title: 'Disk: ' + title,
+        legend: { position: 'bottom' },
+        hAxis: {
+          minValue: [0, 0, 0],
+          maxValue: ts_to_hms(data.max_ts),
+          title: 'Time'
+        },
+        vAxis: {
+          title: 'Disk (MB)',
+          format: '#.## MB'
+        },
+        chartArea: {width: '95%'},
+        colors: ['#20b2aa'],  // Light sea green color for container disk charts
+        backgroundColor: '#f8f9fa'
+      };
+      
+      var containerDiskChartObj = new google.visualization.LineChart(containerDiskChart);
+      containerDiskChartObj.draw(containerDiskDataTable, containerDiskOptions);
+    }
+  }
+  
+  // Host Disk chart
+  var hostDiskHeader = document.createElement('h3');
+  hostDiskHeader.textContent = 'Host';
+  hostDiskHeader.style.color = '#555';
+  hostDiskHeader.style.marginTop = '20px';
+  hostDiskHeader.style.marginBottom = '10px';
+  lineChartContainer.appendChild(hostDiskHeader);
+  
+  if (data.host_disk && data.host_disk.length > 0) {
+    var hostDiskChart = document.createElement('div');
+    hostDiskChart.id = 'hostDiskChart';
+    lineChartContainer.appendChild(hostDiskChart);
+    
+    var hostDiskDataTable = new google.visualization.DataTable();
+    hostDiskDataTable.addColumn({ type: 'timeofday', label: 'Time', id: 'Time' });
+    hostDiskDataTable.addColumn({ type: 'number', label: 'Host Disk (GB)', id: 'HostDisk' });
+    
+    for (const row of data.host_disk) {
+      hostDiskDataTable.addRow([ ts_to_hms(row[0]), row[1] ]);
+    }
+    
+    var hostDiskOptions = {
+      title: 'Host Disk Usage',
+      legend: { position: 'bottom' },
+      hAxis: {
+        minValue: [0, 0, 0],
+        maxValue: ts_to_hms(data.max_ts),
+        title: 'Time'
+      },
+      vAxis: {
+        title: 'Disk (GB)',
+        format: '#.## GB'
+      },
+      chartArea: {width: '95%'},
+      colors: ['#ff6347'],  // Tomato color to distinguish from other charts
+      backgroundColor: '#f8f9fa'
+    };
+    
+    var hostDiskChartObj = new google.visualization.LineChart(hostDiskChart);
+    hostDiskChartObj.draw(hostDiskDataTable, hostDiskOptions);
   }
 }
 </script>
 <!-- Set width here, but leave height unset,
      it is computed above in the JavaScript code. -->
 <div id="timelineContainer" style="width: 99%;"></div>
+<div id="lineChartContainer" style="min-height: 400px;"></div>
+     it is computed above in the JavaScript code. -->
+<div id="timelineContainer" style="width: 99%;"></div>
 <div id="lineChartContainer" style="height: 200px;"></div>
+
+<!-- Test Results Section -->
+<div style="margin-top: 30px;">
+  <div style="cursor: pointer; padding: 10px; background-color: #f5f5f5; border: 1px solid #ddd; border-radius: 5px; user-select: none;" 
+       onclick="toggleTestResults()">
+    <h3 style="margin: 0; display: inline-block;">Test Results</h3>
+    <span id="testToggle" style="float: right; font-weight: bold;">▼</span>
+  </div>
+  <div id="testResultsContent" style="display: none; border: 1px solid #ddd; border-top: none; padding: 20px; background-color: #fafafa;">
+    <div id="testReportsContainer">
+      <!-- Test reports will be inserted here by JavaScript -->
+    </div>
+  </div>
+</div>
+
+<script>
+function toggleTestResults() {
+  const content = document.getElementById('testResultsContent');
+  const toggle = document.getElementById('testToggle');
+  
+  if (content.style.display === 'none') {
+    content.style.display = 'block';
+    toggle.textContent = '▲';
+    // Load test reports when first opened
+    if (!content.hasAttribute('data-loaded')) {
+      loadTestReports();
+      content.setAttribute('data-loaded', 'true');
+    }
+  } else {
+    content.style.display = 'none';
+    toggle.textContent = '▼';
+  }
+}
+
+function loadTestReports() {
+  // This will be populated by monitor.py with actual test report data
+  const container = document.getElementById('testReportsContainer');
+  if (typeof testReportData !== 'undefined' && testReportData) {
+    container.innerHTML = testReportData;
+  } else {
+    container.innerHTML = '<p>No test reports available.</p>';
+  }
+}
+</script>

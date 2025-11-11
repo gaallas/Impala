@@ -41,6 +41,7 @@ import shutil
 import subprocess
 import threading
 import time
+import xml.etree.ElementTree as ET
 
 
 # Unit for reporting user/system CPU seconds in cpuacct.stat.
@@ -58,30 +59,122 @@ def used_memory():
   return _memory()[1]
 
 
+def _host_cpu():
+  """Get host CPU usage as percentages (user, system, idle)."""
+  try:
+    with open("/proc/stat") as f:
+      first_line = f.readline()
+
+    # Parse: cpu user nice system idle iowait irq softirq steal guest guest_nice
+    fields = first_line.split()
+    if len(fields) >= 8 and fields[0] == "cpu":
+      user = int(fields[1])
+      nice = int(fields[2])
+      system = int(fields[3])
+      idle = int(fields[4])
+      iowait = int(fields[5])
+      irq = int(fields[6])
+      softirq = int(fields[7])
+
+      # Total CPU time
+      total = user + nice + system + idle + iowait + irq + softirq
+      if total > 0:
+        user_pct = ((user + nice) * 100.0) / total
+        system_pct = ((system + irq + softirq) * 100.0) / total
+        idle_pct = ((idle + iowait) * 100.0) / total
+        return user_pct, system_pct, idle_pct
+  except (IOError, ValueError, IndexError) as e:
+    logging.warning("Failed to get host CPU usage: %s", e)
+
+  return 0.0, 0.0, 100.0
+
+
 def _memory():
-  """Returns (total, used) memory on system, in GB.
+  """Get host memory usage in GB."""
+  with open("/proc/meminfo") as f:
+    meminfo = f.read()
 
-  Used is computed as total - available.
+  total_kb = None
+  available_kb = None
 
-  Calls "free" and parses output. Sample output for reference:
+  for line in meminfo.split("\n"):
+    if line.startswith("MemTotal:"):
+      total_kb = int(line.split()[1])
+    elif line.startswith("MemAvailable:"):
+      available_kb = int(line.split()[1])
 
-                total        used        free      shared     buffers       cache   available
-  Mem:    126747197440 26363965440 56618553344    31678464  2091614208 41673064448 99384889344
-  Swap:             0           0           0
-  """
+  if total_kb and available_kb:
+    total_gb = total_kb / (1024.0 * 1024.0)
+    used_gb = (total_kb - available_kb) / (1024.0 * 1024.0)
+    return total_gb, used_gb
 
-  free_lines = subprocess.check_output(["free", "-b", "-w"],
-      universal_newlines=True).split('\n')
-  free_grid = [x.split() for x in free_lines]
-  # Identify columns for "total" and "available"
-  total_idx = free_grid[0].index("total")
-  available_idx = free_grid[0].index("available")
-  total = int(free_grid[1][1 + total_idx])
-  available = int(free_grid[1][1 + available_idx])
-  used = total - available
-  total_gb = total / (1024.0 * 1024.0 * 1024.0)
-  used_gb = used / (1024.0 * 1024.0 * 1024.0)
-  return (total_gb, used_gb)
+  return 0.0, 0.0
+
+
+def _global_disk_usage():
+  """Returns (total, used) disk space for root filesystem, in GB."""
+  try:
+    df_output = subprocess.check_output(["df", "-B1", "/"], universal_newlines=True)
+    lines = df_output.strip().split('\n')
+    if len(lines) >= 2:
+      # Parse df output: Filesystem 1B-blocks Used Available Use% Mounted
+      fields = lines[1].split()
+      if len(fields) >= 4:
+        total_bytes = int(fields[1])
+        used_bytes = int(fields[2])
+        total_gb = total_bytes / (1024.0 * 1024.0 * 1024.0)
+        used_gb = used_bytes / (1024.0 * 1024.0 * 1024.0)
+        return (total_gb, used_gb)
+  except Exception as e:
+    logging.warning("Could not get global disk usage: %s", e)
+  return (0.0, 0.0)
+
+
+def _container_disk_usage(container_id):
+  """Get disk usage for a specific container in MB."""
+  try:
+    # First check if container still exists to avoid noisy error messages
+    try:
+      with open(os.devnull, 'w') as devnull:
+        subprocess.check_output(['docker', 'container', 'inspect', container_id,
+                               '--format={{.State.Running}}'], stderr=devnull)
+    except subprocess.CalledProcessError:
+      # Container doesn't exist anymore - this is normal during cleanup
+      return 0.0
+    # Use docker system df to get container size information
+    with open(os.devnull, 'w') as devnull:
+      result = subprocess.check_output(['docker', 'container', 'inspect', container_id,
+                                       '--format={{.SizeRw}}'], stderr=devnull)
+    size_str = result.strip()
+    # If SizeRw is not available, try alternative method
+    if not size_str or size_str == '<nil>' or size_str == '0':
+      # For running containers, try to get disk usage from inside
+      try:
+        with open(os.devnull, 'w') as devnull:
+          result = subprocess.check_output(['docker', 'exec', container_id, 'df', '/'],
+                                         universal_newlines=True, stderr=devnull)
+        lines = result.strip().split('\n')
+        if len(lines) > 1:  # Skip header line
+          fields = lines[1].split()
+          if len(fields) >= 3:
+            used_kb = int(fields[2])
+            return used_kb / 1024.0  # Convert KB to MB
+      except subprocess.CalledProcessError:
+        pass  # Container might not be running or exec might fail
+
+      return 0.0
+    # Parse size (could be in bytes)
+    try:
+      size_bytes = int(size_str)
+      return size_bytes / (1024.0 * 1024.0)  # Convert bytes to MB
+    except ValueError:
+      return 0.0
+  except subprocess.CalledProcessError:
+    # Container no longer exists - this is expected during cleanup, so don't log
+    pass
+  except (ValueError, IndexError) as e:
+    logging.debug("Failed to parse container disk usage for %s: %s", container_id, e)
+  return 0.0
 
 
 def datetime_to_seconds_since_epoch(dt):
@@ -131,6 +224,8 @@ class ContainerMonitor(object):
     self.keep_monitoring = None
     self.monitor_thread = None
     self.frequency_seconds = frequency_seconds
+    self.min_memory_usage_gb = None
+    self.max_memory_usage_gb = None
 
   def start(self):
     self.keep_monitoring = True
@@ -172,36 +267,135 @@ class ContainerMonitor(object):
       return None
 
   def _monitor(self):
-    """Monitors CPU usage of containers.
+    """Monitors CPU and memory usage of containers, supporting both cgroup v1 and v2."""
+    # Detect cgroup version
+    cgroup_v2_path = "/sys/fs/cgroup"
+    cgroup_v1_cpu = None
+    cgroup_v1_mem = None
+    cgroup_v2 = False
+    try:
+      # v2: unified hierarchy has cgroup.controllers file
+      if os.path.exists(os.path.join(cgroup_v2_path, "cgroup.controllers")):
+        cgroup_v2 = True
+    except Exception:
+      pass
 
-    Otput is stored in self.output_path.
-    Also, keeps track of minimum and maximum memory usage (for the machine).
-    """
-    # Ubuntu systems typically mount cpuacct cgroup in /sys/fs/cgroup/cpu,cpuacct,
-    # but this can vary by OS distribution.
-    all_cgroups = subprocess.check_output(
-        "findmnt -n -o TARGET -t cgroup --source cgroup".split(), universal_newlines=True
-    ).split("\n")
-    cpuacct_root = [c for c in all_cgroups if "cpuacct" in c][0]
-    memory_root = [c for c in all_cgroups if "memory" in c][0]
-    logging.info("Using cgroups: cpuacct %s, memory %s", cpuacct_root, memory_root)
+    if not cgroup_v2:
+      # Try v1 detection
+      try:
+        all_cgroups = subprocess.check_output(
+            "findmnt -n -o TARGET -t cgroup --source cgroup".split(),
+            universal_newlines=True
+        ).split("\n")
+        cgroup_v1_cpu = next((c for c in all_cgroups if "cpuacct" in c), None)
+        cgroup_v1_mem = next((c for c in all_cgroups if "memory" in c), None)
+      except Exception as e:
+        logging.warning("Could not detect cgroup v1 mounts: %s", e)
+
+    if cgroup_v2:
+      logging.info("Detected cgroup v2 at %s", cgroup_v2_path)
+    elif cgroup_v1_cpu and cgroup_v1_mem:
+      logging.info("Using cgroup v1: cpuacct %s, memory %s", cgroup_v1_cpu, cgroup_v1_mem)
+    else:
+      logging.warning("No usable cgroup mounts found; resource monitoring disabled.")
+      return
+
     self.min_memory_usage_gb = None
     self.max_memory_usage_gb = None
 
+    def get_v2_metrics(container):
+      # v2: Try multiple possible paths for container cgroups
+      possible_paths = [
+        os.path.join(cgroup_v2_path, "docker", container.id),  # cgroupfs driver
+        os.path.join(cgroup_v2_path, "system.slice",
+                     "docker-{}.scope".format(container.id)),  # systemd driver
+      ]
+
+      dirname = None
+      for path in possible_paths:
+        if os.path.isdir(path):
+          dirname = path
+          break
+
+      if not dirname:
+        logging.debug("No cgroup directory found for container %s. Tried: %s",
+                      container.id, possible_paths)
+        return None, None
+
+      logging.debug("Found cgroup v2 path: %s", dirname)
+
+      try:
+        cpu_file = os.path.join(dirname, "cpu.stat")
+        cpu_stat = open(cpu_file).read().replace("\n", " ").strip()
+        logging.debug("CPU stats: %s", cpu_stat[:100])
+      except Exception as e:
+        logging.debug("Failed to read CPU stats: %s", e)
+        cpu_stat = None
+      try:
+        mem_file = os.path.join(dirname, "memory.stat")
+        mem_stat = open(mem_file).read().replace("\n", " ").strip()
+        logging.debug("Memory stats length: %d", len(mem_stat))
+      except Exception as e:
+        logging.debug("Failed to read memory stats: %s", e)
+        mem_stat = None
+      return cpu_stat, mem_stat
+
     with open(self.output_path, "w") as output:
       while self.keep_monitoring:
-        # Use a single timestamp for a given round of monitoring.
         now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")
+        logging.debug("Monitoring %d containers at %s", len(self.containers), now)
         for c in self.containers:
-          cpu = self._metrics_from_stat_file(cpuacct_root, c, "cpuacct.stat")
-          memory = self._metrics_from_stat_file(memory_root, c, "memory.stat")
-          if cpu:
-            output.write("%s %s cpu %s\n" % (now, c.id, cpu))
-          if memory:
-            output.write("%s %s memory %s\n" % (now, c.id, memory))
+          logging.debug("Processing container: %s", c.id)
+          if cgroup_v2:
+            cpu, memory = get_v2_metrics(c)
+            # v2 cpu.stat: usage_usec, user_usec, system_usec
+            # For compatibility, we fake v1 format: user <user_usec> system <system_usec>
+            if cpu:
+              try:
+                # Parse cgroup v2 format: "key1 value1 key2 value2 key3 value3"
+                cpu_parts = cpu.split()
+                cpu_fields = {}
+                for i in range(0, len(cpu_parts), 2):
+                  if i + 1 < len(cpu_parts):
+                    cpu_fields[cpu_parts[i]] = cpu_parts[i + 1]
+                user_usec = int(cpu_fields.get("user_usec", 0))
+                system_usec = int(cpu_fields.get("system_usec", 0))
+                output.write("%s %s cpu user %d system %d\n" % (
+                    now, c.id, user_usec // 1000000, system_usec // 1000000))
+                logging.debug("Wrote CPU metrics for %s", c.id)
+              except Exception as e:
+                logging.warning("Failed to parse cgroup v2 cpu.stat: %s", e)
+            if memory:
+              output.write("%s %s memory %s\n" % (now, c.id, memory))
+              logging.debug("Wrote memory metrics for %s", c.id)
+          else:
+            cpu = self._metrics_from_stat_file(cgroup_v1_cpu, c, "cpuacct.stat")
+            memory = self._metrics_from_stat_file(cgroup_v1_mem, c, "memory.stat")
+            if cpu:
+              output.write("%s %s cpu %s\n" % (now, c.id, cpu))
+            if memory:
+              output.write("%s %s memory %s\n" % (now, c.id, memory))
+
+          # Write container disk usage metrics
+          container_disk_mb = _container_disk_usage(c.id)
+          output.write("%s %s disk used_mb %.2f\n" % (now, c.id, container_disk_mb))
+          logging.debug("Wrote disk metrics for %s: %.2f MB", c.id, container_disk_mb)
+        # Write host memory, disk, and CPU metrics
+        host_memory_total, host_memory_used = _memory()
+        host_disk_total, host_disk_used = _global_disk_usage()
+        host_cpu_user, host_cpu_system, host_cpu_idle = _host_cpu()
+        output.write("%s HOST memory total_gb %.3f used_gb %.3f\n" % (
+            now, host_memory_total, host_memory_used))
+        output.write("%s HOST disk total_gb %.3f used_gb %.3f\n" % (
+            now, host_disk_total, host_disk_used))
+        output.write("%s HOST cpu user_pct %.3f system_pct %.3f idle_pct %.3f\n" % (
+            now, host_cpu_user, host_cpu_system, host_cpu_idle))
+        logging.debug("Wrote host metrics: Memory %.3f/%.3f GB, Disk %.3f/%.3f GB, "
+                      "CPU %.1f%% user %.1f%% system",
+                      host_memory_used, host_memory_total, host_disk_used,
+                      host_disk_total, host_cpu_user, host_cpu_system)
         output.flush()
 
-        # Machine-wide memory usage
         m = used_memory()
         if self.min_memory_usage_gb is None:
           self.min_memory_usage_gb, self.max_memory_usage_gb = m, m
@@ -240,23 +434,72 @@ class Timeline(object):
 
     Given metrics lines like:
 
-    2017-10-25 10:08:30.961510 87d5562a5fe0ea075ebb2efb0300d10d23bfa474645bb464d222976ed872df2a cpu user 33 system 15
+    2017-10-25 10:08:30.961510 \\
+        87d5562a5fe0ea075ebb2efb0300d10d23bfa474645bb464d222976ed872df2a \\
+            cpu user 33 system 15
+    2017-10-25 10:08:30.961510 HOST memory total_gb 16.000 used_gb 8.500
+    2017-10-25 10:08:30.961510 HOST disk total_gb 500.000 used_gb 250.000
+    2017-10-25 10:08:30.961510 \\
+        87d5562a5fe0ea075ebb2efb0300d10d23bfa474645bb464d222976ed872df2a \\
+        disk used_mb 150.50
 
-    Returns an iterable of (ts, container, user_cpu, system_cpu). It also updates
-    container.peak_total_rss and container.total_user_cpu and container.total_system_cpu.
+    Returns an iterable of (ts, container, user_cpu, system_cpu, memory_mb,
+    host_memory_gb, container_disk_mb, host_disk_gb, host_cpu_user, host_cpu_system).
+    It also updates container.peak_total_rss and container.total_user_cpu and
+    container.total_system_cpu.
     """
     prev_by_container = {}
     peak_rss_by_container = {}
+    current_memory_by_container = {}
+    current_disk_by_container = {}
+    host_memory_gb = 0  # Track current host memory usage
+    host_disk_gb = 0   # Track current host disk usage
+    host_cpu_user = 0  # Track current host CPU user %
+    host_cpu_system = 0  # Track current host CPU system %
     for line in f:
       ts, rest = split_timestamp(line.rstrip())
       total_rss = None
       try:
         container, metric_type, rest2 = rest.split(" ", 2)
-        if metric_type == "cpu":
+        if container == "HOST" and metric_type == "memory":
+          # Parse host memory: "total_gb 16.000 used_gb 8.500"
+          metrics = rest2.split(" ")
+          if "used_gb" in metrics:
+            host_memory_gb = float(metrics[metrics.index("used_gb") + 1])
+          continue
+        elif container == "HOST" and metric_type == "disk":
+          # Parse host disk: "total_gb 500.000 used_gb 250.000"
+          metrics = rest2.split(" ")
+          if "used_gb" in metrics:
+            host_disk_gb = float(metrics[metrics.index("used_gb") + 1])
+          continue
+        elif container == "HOST" and metric_type == "cpu":
+          # Parse host CPU: "user_pct 15.5 system_pct 5.2 idle_pct 79.3"
+          metrics = rest2.split(" ")
+          if "user_pct" in metrics:
+            host_cpu_user = float(metrics[metrics.index("user_pct") + 1])
+          if "system_pct" in metrics:
+            host_cpu_system = float(metrics[metrics.index("system_pct") + 1])
+          continue
+        elif metric_type == "cpu":
           _, user_cpu_s, _, system_cpu_s = rest2.split(" ", 3)
         elif metric_type == "memory":
           memory_metrics = rest2.split(" ")
-          total_rss = int(memory_metrics[memory_metrics.index("total_rss") + 1 ])
+          # Try to find total_rss (cgroup v1) or anon (cgroup v2) as memory usage
+          # indicator
+          total_rss = None
+          if "total_rss" in memory_metrics:
+            total_rss = int(memory_metrics[memory_metrics.index("total_rss") + 1])
+          elif "anon" in memory_metrics:
+            # In cgroup v2, use anon memory as an approximation of RSS
+            total_rss = int(memory_metrics[memory_metrics.index("anon") + 1])
+        elif metric_type == "disk":
+          # Parse container disk: "used_mb 150.50"
+          disk_metrics = rest2.split(" ")
+          if "used_mb" in disk_metrics:
+            disk_mb = float(disk_metrics[disk_metrics.index("used_mb") + 1])
+            current_disk_by_container[container] = disk_mb
+          continue
       except:
         logging.warning("Skipping metric line: %s", line)
         continue
@@ -264,6 +507,7 @@ class Timeline(object):
       if total_rss is not None:
         peak_rss_by_container[container] = max(peak_rss_by_container.get(container, 0),
             total_rss)
+        current_memory_by_container[container] = total_rss
         continue
 
       prev_ts, prev_user, prev_system = prev_by_container.get(
@@ -273,10 +517,14 @@ class Timeline(object):
       if prev_ts is not None:
         # Timestamps are seconds since the epoch and are floats.
         dt = ts - prev_ts
-        assert type(dt) == float
+        assert isinstance(dt, float)
         if dt != 0:
-          yield ts, container, (user_cpu - prev_user) // dt // USER_HZ,\
-              (system_cpu - prev_system) // dt // USER_HZ
+          # Get current memory usage in MB
+          memory_mb = current_memory_by_container.get(container, 0) / (1024 * 1024)
+          container_disk_mb = current_disk_by_container.get(container, 0)
+          yield (ts, container, (user_cpu - prev_user) / dt / USER_HZ,
+                 (system_cpu - prev_system) / dt / USER_HZ, memory_mb, host_memory_gb,
+                 container_disk_mb, host_disk_gb, host_cpu_user, host_cpu_system)
       prev_by_container[container] = ts, user_cpu, system_cpu
 
     # Now update container totals
@@ -287,7 +535,348 @@ class Timeline(object):
       if c.id in peak_rss_by_container:
         c.peak_total_rss = peak_rss_by_container[c.id]
 
+  def create_inline_test_reports(self):
+    """Creates inline HTML test reports for containers based on TEST-*.xml files."""
+    inline_html_parts = []
+
+    for container in self.containers:
+      # Look for test XML files in the container's log directory
+      container_log_dir = os.path.dirname(container.logfile)
+      test_xml_files = []
+
+      # Search for XML files recursively in the container directory
+      for root, dirs, files in os.walk(container_log_dir):
+        for file in files:
+          if file.endswith('.xml') and 'TEST-' in file:
+            test_xml_files.append(os.path.join(root, file))
+
+      if not test_xml_files:
+        continue
+
+      # Parse test results from XML files
+      total_tests = 0
+      total_failures = 0
+      total_errors = 0
+      total_skipped = 0
+      test_cases = []
+
+      for xml_file in test_xml_files:
+        try:
+          tree = ET.parse(xml_file)
+          root = tree.getroot()
+
+          # Parse testsuite element
+          if root.tag == 'testsuite':
+            testsuite = root
+          else:
+            testsuite = root.find('testsuite')
+
+          if testsuite is not None:
+            # Aggregate counts
+            total_tests += int(testsuite.get('tests', 0))
+            total_failures += int(testsuite.get('failures', 0))
+            total_errors += int(testsuite.get('errors', 0))
+            total_skipped += int(testsuite.get('skipped', 0))
+
+            # Collect individual test cases
+            for testcase in testsuite.findall('testcase'):
+              case_info = {
+                'name': testcase.get('name', ''),
+                'classname': testcase.get('classname', ''),
+                'time': testcase.get('time', '0'),
+                'status': 'passed'
+              }
+
+              # Check for failure or error
+              if testcase.find('failure') is not None:
+                case_info['status'] = 'failed'
+                failure_elem = testcase.find('failure')
+                case_info['failure_message'] = failure_elem.get('message', '')
+                case_info['failure_detail'] = failure_elem.text or ''
+              elif testcase.find('error') is not None:
+                case_info['status'] = 'error'
+                error_elem = testcase.find('error')
+                case_info['error_message'] = error_elem.get('message', '')
+                case_info['error_detail'] = error_elem.text or ''
+              elif testcase.get('skipped') or testcase.find('skipped') is not None:
+                case_info['status'] = 'skipped'
+
+              test_cases.append(case_info)
+        except Exception as e:
+          logging.warning("Error parsing test XML file %s: %s", xml_file, e)
+          continue
+
+      if total_tests == 0:
+        continue
+
+      # Generate inline HTML for this container
+      container_html = self._generate_inline_test_report_html(
+        container.name, total_tests, total_failures,
+        total_errors, total_skipped, test_cases)
+
+      inline_html_parts.append(container_html)
+      logging.info("Generated inline test report for container %s (%d tests)",
+                   container.name, total_tests)
+    if not inline_html_parts:
+      return "<p>No test reports available.</p>"
+
+    return "\\n".join(inline_html_parts)
+
+  def _generate_test_report_html(self, container_name, test_name, total_tests,
+                                total_failures, total_errors, total_skipped, test_cases):
+    """Generate HTML content for a container test report."""
+
+    success_rate = (((total_tests - total_failures - total_errors) / total_tests * 100)
+                    if total_tests > 0 else 0)
+    passed_count = total_tests - total_failures - total_errors - total_skipped
+
+    html = """<!DOCTYPE html>
+<html>
+<head>
+    <title>Test Report - {container_name}</title>
+    <style>
+        body {{ font-family: Arial, sans-serif; margin: 20px; }}
+        .header {{ background-color: #f5f5f5; padding: 20px; border-radius: 5px; \
+margin-bottom: 20px; }}
+        .summary {{ display: flex; gap: 20px; margin-bottom: 20px; }}
+        .summary-item {{ padding: 10px; border-radius: 5px; text-align: center; \
+min-width: 80px; }}
+        .summary-total {{ background-color: #e3f2fd; }}
+        .summary-passed {{ background-color: #e8f5e8; }}
+        .summary-failed {{ background-color: #ffebee; }}
+        .summary-error {{ background-color: #fff3e0; }}
+        .summary-skipped {{ background-color: #f3e5f5; }}
+        .test-table {{ width: 100%; border-collapse: collapse; }}
+        .test-table th, .test-table td {{ border: 1px solid #ddd; padding: 8px; \
+text-align: left; }}
+        .test-table th {{ background-color: #f2f2f2; }}
+        .status-passed {{ color: green; font-weight: bold; }}
+        .status-failed {{ color: red; font-weight: bold; }}
+        .status-error {{ color: orange; font-weight: bold; }}
+        .status-skipped {{ color: gray; font-weight: bold; }}
+        .failure-detail {{ margin-top: 5px; padding: 5px; background-color: #fff5f5; \
+border-left: 3px solid red; font-family: monospace; font-size: 12px; }}
+        .error-detail {{ margin-top: 5px; padding: 5px; background-color: #fff9e6; \
+border-left: 3px solid orange; font-family: monospace; font-size: 12px; }}
+        .back-link {{ margin-bottom: 20px; }}
+        .back-link a {{ color: #1976d2; text-decoration: none; }}
+        .back-link a:hover {{ text-decoration: underline; }}
+    </style>
+</head>
+<body>
+    <div class="back-link">
+        <a href="timeline.html">&larr; Back to Timeline</a>
+    </div>
+
+    <div class="header">
+        <h1>Test Report: {container_name}</h1>
+        <p><strong>Test Suite:</strong> {test_name_upper}</p>
+        <p><strong>Success Rate:</strong> {success_rate:.1f}%</p>
+    </div>
+
+    <div class="summary">
+        <div class="summary-item summary-total">
+            <div><strong>{total_tests}</strong></div>
+            <div>Total</div>
+        </div>
+        <div class="summary-item summary-passed">
+            <div><strong>{passed_count}</strong></div>
+            <div>Passed</div>
+        </div>
+        <div class="summary-item summary-failed">
+            <div><strong>{total_failures}</strong></div>
+            <div>Failed</div>
+        </div>
+        <div class="summary-item summary-error">
+            <div><strong>{total_errors}</strong></div>
+            <div>Error</div>
+        </div>
+        <div class="summary-item summary-skipped">
+            <div><strong>{total_skipped}</strong></div>
+            <div>Skipped</div>
+        </div>
+    </div>
+
+    <h2>Test Cases</h2>
+    <table class="test-table">
+        <thead>
+            <tr>
+                <th>Test Name</th>
+                <th>Class</th>
+                <th>Status</th>
+                <th>Time (s)</th>
+                <th>Details</th>
+            </tr>
+        </thead>
+        <tbody>""".format(
+        container_name=container_name,
+        test_name_upper=test_name.upper(),
+        success_rate=success_rate,
+        total_tests=total_tests,
+        passed_count=passed_count,
+        total_failures=total_failures,
+        total_errors=total_errors,
+        total_skipped=total_skipped
+    )
+
+    for case in test_cases:
+        status_class = "status-{}".format(case['status'])
+        details = ""
+
+        if case['status'] == 'failed':
+            details = """<div class="failure-detail">
+                <strong>Failure:</strong> {}<br>
+                <pre>{}</pre>
+            </div>""".format(
+                case.get('failure_message', ''),
+                case.get('failure_detail', '')
+            )
+        elif case['status'] == 'error':
+            details = """<div class="error-detail">
+                <strong>Error:</strong> {}<br>
+                <pre>{}</pre>
+            </div>""".format(
+                case.get('error_message', ''),
+                case.get('error_detail', '')
+            )
+
+        html += """
+            <tr>
+                <td>{}</td>
+                <td>{}</td>
+                <td class="{}">{}</td>
+                <td>{}</td>
+                <td>{}</td>
+            </tr>""".format(
+                case['name'],
+                case['classname'],
+                status_class,
+                case['status'].upper(),
+                case['time'],
+                details
+            )
+
+    html += """
+        </tbody>
+    </table>
+</body>
+</html>"""
+
+    return html
+
+  def _generate_inline_test_report_html(self, container_name, total_tests,
+                                       total_failures, total_errors, total_skipped,
+                                       test_cases):
+    """Generate inline HTML content for a container test report (for embedding in
+    timeline)."""
+
+    success_rate = ((total_tests - total_failures - total_errors) / total_tests * 100) \
+        if total_tests > 0 else 0
+    passed_count = total_tests - total_failures - total_errors - total_skipped
+
+    # Generate a compact version for inline display
+    html = """
+    <div style="margin-bottom: 30px; border: 1px solid #ddd; \\
+border-radius: 5px; overflow: hidden;">
+      <div style="background-color: #f8f9fa; padding: 15px; \\
+border-bottom: 1px solid #ddd;">
+        <h3 style="margin: 0; color: #333;">Container: {container_name}</h3>
+        <p style="margin: 5px 0 0 0; color: #666;">Success Rate: {success_rate:.1f}% \\
+            ({passed_count}/{total_tests} passed)</p>
+      </div>
+
+      <div style="padding: 15px;">
+        <div style="display: flex; gap: 15px; margin-bottom: 15px; flex-wrap: wrap;">
+          <div style="padding: 8px 12px; border-radius: 3px; background-color: #e3f2fd; \
+text-align: center; min-width: 60px;">
+            <strong>{total_tests}</strong><br><small>Total</small>
+          </div>
+          <div style="padding: 8px 12px; border-radius: 3px; background-color: #e8f5e8; \
+text-align: center; min-width: 60px;">
+            <strong>{passed_count}</strong><br><small>Passed</small>
+          </div>
+          <div style="padding: 8px 12px; border-radius: 3px; background-color: #ffebee; \
+text-align: center; min-width: 60px;">
+            <strong>{total_failures}</strong><br><small>Failed</small>
+          </div>
+          <div style="padding: 8px 12px; border-radius: 3px; background-color: #fff3e0; \
+text-align: center; min-width: 60px;">
+            <strong>{total_errors}</strong><br><small>Error</small>
+          </div>
+          <div style="padding: 8px 12px; border-radius: 3px; background-color: #f3e5f5; \
+text-align: center; min-width: 60px;">
+            <strong>{total_skipped}</strong><br><small>Skipped</small>
+          </div>
+        </div>""".format(
+        container_name=container_name,
+        success_rate=success_rate,
+        total_tests=total_tests,
+        passed_count=passed_count,
+        total_failures=total_failures,
+        total_errors=total_errors,
+        total_skipped=total_skipped)
+
+    # Add test cases table if there are any failures or errors
+    if total_failures > 0 or total_errors > 0:
+      html += '''
+        <details style="margin-top: 10px;">
+          <summary style="cursor: pointer; font-weight: bold; color: #d32f2f;">\
+View Failed/Error Tests ({} issues)</summary>
+          <div style="margin-top: 10px; max-height: 300px; overflow-y: auto;">
+            <table style="width: 100%; border-collapse: collapse; font-size: 12px;">
+              <thead>
+                <tr style="background-color: #f5f5f5;">
+                  <th style="border: 1px solid #ddd; padding: 6px; text-align: left;">\
+Test Name</th>
+                  <th style="border: 1px solid #ddd; padding: 6px; text-align: left;">\
+Status</th>
+                  <th style="border: 1px solid #ddd; padding: 6px; text-align: left;">\
+Time</th>
+                  <th style="border: 1px solid #ddd; padding: 6px; text-align: left;">\
+Details</th>
+                </tr>
+              </thead>
+              <tbody>'''.format(total_failures + total_errors)
+
+      for case in test_cases:
+        if case['status'] in ['failed', 'error']:
+          status_color = '#d32f2f' if case['status'] == 'failed' else '#ff9800'
+          failure_detail = case.get('failure_detail', case.get('error_detail', ''))
+          detail_text = failure_detail[:100] + '...' if len(failure_detail) > 100 \
+              else failure_detail
+
+          html += '''
+                <tr>
+                  <td style="border: 1px solid #ddd; padding: 6px;">{name}</td>
+                  <td style="border: 1px solid #ddd; padding: 6px; color: {color}; \
+font-weight: bold;">{status}</td>
+                  <td style="border: 1px solid #ddd; padding: 6px;">{time}s</td>
+                  <td style="border: 1px solid #ddd; padding: 6px; \
+font-family: monospace; font-size: 10px;">{detail}</td>
+                </tr>'''.format(
+            name=(case['name'][:50] + '...'
+                  if len(case['name']) > 50 else case['name']),
+            status=case['status'].upper(),
+            color=status_color,
+            time=case['time'],
+            detail=detail_text.replace('<', '&lt;').replace('>', '&gt;'))
+
+      html += '''
+              </tbody>
+            </table>
+          </div>
+        </details>'''
+
+    html += '''
+      </div>
+    </div>'''
+
+    return html
+
   def create(self, output):
+    # Generate per-container test reports as inline HTML (not separate files)
+    inline_test_reports = self.create_inline_test_reports()
+
     # Read logfiles
     timelines = []
     for c in self.containers:
@@ -307,43 +896,112 @@ class Timeline(object):
             [name, msg, ts_current, ts_next]
         )
     if not timeline_json:
-      logging.warning("No timeline data; skipping timeline")
-      return
+      logging.warning("No timeline data from logfiles; will try to generate timeline "
+                      "from metrics only")
+      # Continue with empty timeline data, but still try to process metrics
+      timeline_min_ts = float('inf')
+    else:
+      timeline_min_ts = min(x[2] for x in timeline_json) \
+          if timeline_json else float('inf')
 
-    min_ts = min(x[2] for x in timeline_json)
+    # Find the minimum timestamp from BOTH timeline events AND metrics
+    metrics_min_ts = float('inf')
+    container_by_id = dict()
+    for c in self.containers:
+      container_by_id[c.id] = c
+
+    metrics_file_exists = os.path.exists(self.monitor_file)
+    if metrics_file_exists:
+      try:
+        for (ts, container_id, user, system, memory, host_memory, container_disk,
+             host_disk, host_cpu_user, host_cpu_system) in (
+             self.parse_metrics(open(self.monitor_file))):
+          container = container_by_id.get(container_id)
+          if container:  # Only consider metrics for containers we're tracking
+            metrics_min_ts = min(metrics_min_ts, ts)
+      except Exception as e:
+        logging.warning("Error parsing metrics file for min timestamp: %s", e)
+
+    # Use the overall minimum timestamp from both sources
+    min_ts = min(timeline_min_ts, metrics_min_ts)
+    if min_ts == float('inf'):
+      min_ts = 0  # Fallback if no data
+
+
 
     for row in timeline_json:
       row[2] = row[2] - min_ts
       row[3] = row[3] - min_ts
 
-    # metrics_by_container: container -> [ ts, user, system ]
+    # metrics_by_container: container -> [ ts, user, system, memory, disk ]
+    # host_memory_data: list of [ts, memory_gb]
+    # host_disk_data: list of [ts, disk_gb]
+    # host_cpu_data: list of [ts, user_pct, system_pct]
     metrics_by_container = dict()
+    host_memory_data = []
+    host_disk_data = []
+    host_cpu_data = []
     max_metric_ts = 0
-    container_by_id = dict()
-    for c in self.containers:
-      container_by_id[c.id] = c
 
-    for ts, container_id, user, system in self.parse_metrics(open(self.monitor_file)):
-      container = container_by_id.get(container_id)
-      if not container:
-        continue
+    if metrics_file_exists:
+      try:
+        for (ts, container_id, user, system, memory, host_memory, container_disk,
+             host_disk, host_cpu_user, host_cpu_system) in (
+             self.parse_metrics(open(self.monitor_file))):
+          container = container_by_id.get(container_id)
+          if not container:
+            continue
+          if ts > max_metric_ts:
+            max_metric_ts = ts
 
-      if ts > max_metric_ts:
-        max_metric_ts = ts
-      if ts < min_ts:
-        # We ignore metrics that show up before the timeline's
-        # first messages. This largely avoids a bug in the
-        # Google Charts visualization code wherein one of the series seems
-        # to wrap around.
-        continue
-      metrics_by_container.setdefault(
-          container.name, []).append((ts - min_ts, user, system))
+          # Add container metrics
+          metrics_by_container.setdefault(container.name, []).append(
+              (ts - min_ts, user, system, memory, container_disk))
+
+          # Add host memory data (avoid duplicates by checking if timestamp
+          # already exists)
+          adjusted_ts = ts - min_ts
+          if not host_memory_data or host_memory_data[-1][0] != adjusted_ts:
+            host_memory_data.append([adjusted_ts, host_memory])
+
+          # Add host disk data (avoid duplicates by checking if timestamp already exists)
+          if not host_disk_data or host_disk_data[-1][0] != adjusted_ts:
+            host_disk_data.append([adjusted_ts, host_disk])
+
+          # Add host CPU data (avoid duplicates by checking if timestamp already exists)
+          if not host_cpu_data or host_cpu_data[-1][0] != adjusted_ts:
+            host_cpu_data.append([adjusted_ts, host_cpu_user, host_cpu_system])
+
+      except Exception as e:
+        logging.warning("Error parsing metrics file: %s", e)
 
     with open(output, "w") as o:
       template_path = os.path.join(os.path.dirname(__file__), "timeline.html.template")
       shutil.copyfileobj(open(template_path), o)
+
+      # Test reports are already generated as inline HTML above
+
       o.write("\n<script>\nvar data = \n")
-      json.dump(dict(buildname=self.buildname, timeline=timeline_json,
-          metrics=metrics_by_container, max_ts=(max_metric_ts - min_ts)), o, indent=2)
-      o.write("</script>")
+      try:
+        json.dump(dict(buildname=self.buildname, timeline=timeline_json,
+            metrics=metrics_by_container, host_memory=host_memory_data,
+            host_disk=host_disk_data, host_cpu=host_cpu_data,
+            max_ts=(max_metric_ts - min_ts if metrics_file_exists else 0)),
+            o, indent=2)
+        o.write(";\n\n")
+        # Add test report data as a separate JavaScript variable
+        o.write("var testReportData = ")
+        json.dump(inline_test_reports, o)
+        o.write(";\n</script>")
+      except Exception as e:
+        logging.error("Failed to write timeline JSON data: %s", e)
+        # Write a minimal valid JSON to avoid breaking the timeline
+        json.dump(dict(buildname=self.buildname, timeline=timeline_json,
+                  metrics=metrics_by_container, host_memory=[], host_disk=[],
+                  host_cpu=[], max_ts=0), o, indent=2)
+        o.write(";\nvar testReportData = ")
+        fallback_report = "<p>No test reports available.</p>"
+        json.dump(inline_test_reports if 'inline_test_reports' in locals()
+                  else fallback_report, o)
+        o.write(";\n</script>")
       o.close()
