@@ -42,6 +42,8 @@ set -euo pipefail
 MVN_LOG=$1
 OUTFILE=$2
 
+IMPALA_MAVEN_CACHE_BUCKET=impala-maven-cache
+
 TMP_DIR=$(mktemp -d)
 ARCHIVE_DIR=${TMP_DIR}/repository
 
@@ -79,6 +81,22 @@ for dir in $(cat ${TMP_DIR}/cdp_cdh_directories.txt); do
 done
 
 # Tar it up
-tar -zcf ${OUTFILE} -C ${TMP_DIR} repository
+# Use pigz if available, it is faster
+if command -v pigz; then
+  COMPRESS_PROGRAM=pigz
+else
+  COMPRESS_PROGRAM=gzip
+fi
+tar -I $COMPRESS_PROGRAM -cf ${OUTFILE} -C ${TMP_DIR} repository
+
+# Upload to S3. Permissions are managed implicitly by the runtime environment.
+if command -v aws; then
+  # Add a timestamp to the archive's name. Timestamp is YYYY-MM-DD_HH-MM-SS in UTC.
+  ARCHIVE_NAME=$JOB_NAME/m2_archive_$(date -u +%F_%H-%M-%S).tar.gz
+  aws cp --quiet --only-show-errors --storage-class=INTELLIGENT_TIERING \
+      --region=us-west-2 ${OUTFILE} s3://${IMPALA_MAVEN_CACHE_BUCKET}/${ARCHIVE_NAME}
+else
+  echo "Missing AWSCLI, tarball not uploaded to S3"
+fi
 
 # Note: The exit callback handles cleanup of the temp directory.
