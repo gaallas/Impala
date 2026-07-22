@@ -90,6 +90,7 @@ OS_MAPPING = [
   OsMapping('ubuntu24', "ec2-package-ubuntu-24-04")
 ]
 
+unzip_tool = "pigz" if shutil.which("pigz") else "gzip"
 
 def get_toolchain_compiler():
   """Return the <name>-<version> string for the compiler package to use for the
@@ -122,7 +123,8 @@ def wget_and_unpack_package(download_path, file_name, destination, wget_no_clobb
       logging.error("Download failed; retrying after sleep: " + str(e))
       time.sleep(10 + random.random() * 5)  # Sleep between 10 and 15 seconds.
   logging.info("Extracting {0}".format(file_name))
-  subprocess.check_call(["tar", "xzf", os.path.join(destination, file_name),
+  subprocess.check_call(["tar", "-I", unzip_tool, "-xf",
+                         os.path.join(destination, file_name),
                          "--directory={0}".format(destination)])
   os.unlink(os.path.join(destination, file_name))
 
