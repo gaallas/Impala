@@ -329,11 +329,19 @@ if [ ! -d "/usr/local/apache-maven-${MVN_VERSION}" ]; then
   redhat indocker sudo chmod 0755 ${MAVEN_DIRECTORY}/{bin,boot}
 fi
 
-if ! { service --status-all | grep -E '^ \[ \+ \]  ssh$'; }
+if [[ $UBUNTU == 'true' ]]; then
+  SSHD_SERVICE=ssh
+elif [[ $REDHAT == 'true' ]]; then
+  SSHD_SERVICE=sshd
+fi
+
+if ! sudo systemctl is-active ${SSHD_SERVICE}
 then
-  ubuntu sudo service ssh start
-  redhat notindocker sudo service sshd start
+  ubuntu sudo systemctl start ${SSHD_SERVICE}
+  redhat notindocker sudo systemctl start ${SSHD_SERVICE}
   redhat indocker sudo /usr/bin/ssh-keygen -A
+  # TODO: change this to systemctl start after the init (PID 1) problem is fixed
+  #       for docker-based parallel tests
   redhat indocker sudo /usr/sbin/sshd
   # The CentOS 8.1 image includes /var/run/nologin by mistake; this file prevents
   # SSH logins. See https://github.com/CentOS/sig-cloud-instance-images/issues/60
@@ -350,10 +358,11 @@ function setup_postgresql() {
   echo ">>> Configuring postgresql. This can fail if postgres is already initialized"
 
   # initdb can fail if it was run before on this host - ignore this error
-  redhat notindocker sudo service postgresql initdb || true
-  redhat notindocker sudo service postgresql stop
-  redhat indocker sudo -u postgres PGDATA=/var/lib/pgsql/data pg_ctl init
-  ubuntu sudo service postgresql stop
+# redhat notindocker sudo /usr/bin/postgresql-setup --initdb --unit postgresql || true
+  redhat sudo /usr/bin/postgresql-setup --initdb || true
+#  redhat notindocker sudo systemctl stop postgresql
+#  redhat indocker sudo -u postgres PGDATA=/var/lib/pgsql/data pg_ctl init
+  ubuntu sudo systemctl stop postgresql
 
   # These configurations expose connectiong to PostgreSQL via md5-hashed
   # passwords over TCP to localhost, and the local socket is trusted
@@ -375,8 +384,8 @@ function setup_postgresql() {
   redhat sudo sed -ri 's/host +all +all +127.0.0.1\/32/host all all samenet/g' \
     /var/lib/pgsql/data/pg_hba.conf
 
-  ubuntu sudo service postgresql start
-  redhat notindocker sudo service postgresql start
+  ubuntu sudo systemctl start postgresql
+  redhat notindocker sudo systemctl start postgresql
   # Important to redirect pg_ctl to a logfile, lest it keep the stdout
   # file descriptor open, preventing the shell from exiting.
   redhat indocker sudo -u postgres PGDATA=/var/lib/pgsql/data bash -c \
@@ -473,7 +482,6 @@ then
 fi
 cd "$IMPALA_HOME"
 SET_IMPALA_HOME="export IMPALA_HOME=$(pwd)"
-echo -e "\n$SET_IMPALA_HOME" >> ~/.bashrc
 eval "$SET_IMPALA_HOME"
 
 # Optionally try to prepopulate the m2 directory to save time. Since Maven has
