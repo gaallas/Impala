@@ -329,9 +329,9 @@ if [ ! -d "/usr/local/apache-maven-${MVN_VERSION}" ]; then
   redhat indocker sudo chmod 0755 ${MAVEN_DIRECTORY}/{bin,boot}
 fi
 
-if [[ $UBUNTU == 'true' ]]; then
+if [[ "$UBUNTU" == true ]]; then
   SSHD_SERVICE=ssh
-elif [[ $REDHAT == 'true' ]]; then
+elif [[ "$REDHAT" == true ]]; then
   SSHD_SERVICE=sshd
 fi
 
