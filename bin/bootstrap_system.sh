@@ -237,9 +237,10 @@ ubuntu sudo update-java-alternatives -l || true
 ubuntu sudo update-java-alternatives -v -s \
     java-1.${UBUNTU_JAVA_VERSION}.0-openjdk-${UBUNTU_PACKAGE_ARCH}
 
-redhat sudo yum install -y file gawk gcc gcc-c++ git krb5-devel krb5-server \
+redhat sudo yum install -y --enablerepo=crb \
+        file gawk gcc gcc-c++ git krb5-devel krb5-server \
         krb5-workstation libevent-devel libffi-devel make openssl-devel cyrus-sasl \
-        cyrus-sasl-gssapi cyrus-sasl-devel cyrus-sasl-plain \
+        cyrus-sasl-gssapi cyrus-sasl-devel cyrus-sasl-plain ninja-build \
         postgresql postgresql-server rpm-build \
         wget vim-common cmake zlib-devel \
         procps psmisc lsof openssh-server \
