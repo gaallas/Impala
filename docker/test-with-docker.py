@@ -649,6 +649,9 @@ class TestWithDocker(object):
           # Required for some of the ntp handling in bootstrap and Kudu;
           # requirement may be lifted in newer Docker versions.
           "--privileged",
+          # Add an init-like PID 1 process to handle reaping zombies and forwarding
+          # standard signals. Docker can supply this since v 1.25
+          "--init",
           "--name", name,
           # Whereas the container names vary across containers, we use the same
           # hostname repeatedly, so that the build container and the test
