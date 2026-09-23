@@ -1,7 +1,7 @@
 ====
 ---- QUERY
 # Check that int64 timestamp columns can be read as TIMESTAMP.
-set timezone=CET;
+set timezone=Europe/Budapest;
 select * from int64_timestamps_plain;
 ---- TYPES
 TIMESTAMP,TIMESTAMP,TIMESTAMP,TIMESTAMP
@@ -29,13 +29,13 @@ BIGINT
 ====
 ---- QUERY
 # List rows where one of the int64->timestamp conversion is incorrect.
-set timezone=CET;
+set timezone=Europe/Budapest;
 select *
 from int64_timestamps_dict t join int64_bigints_dict b on t.id = b.id
 where t.new_logical_milli_local != milliseconds_add("1970-01-01", b.new_logical_milli_local)
-  or t.new_logical_milli_utc != from_utc_timestamp(milliseconds_add("1970-01-01", b.new_logical_milli_utc), "CET")
+  or t.new_logical_milli_utc != from_utc_timestamp(milliseconds_add("1970-01-01", b.new_logical_milli_utc), "Europe/Budapest")
   or t.new_logical_micro_local != microseconds_add("1970-01-01", b.new_logical_micro_local)
-  or t.new_logical_micro_utc != from_utc_timestamp(microseconds_add("1970-01-01", b.new_logical_micro_utc), "CET");
+  or t.new_logical_micro_utc != from_utc_timestamp(microseconds_add("1970-01-01", b.new_logical_micro_utc), "Europe/Budapest");
 ---- TYPES
 INT,TIMESTAMP,TIMESTAMP,TIMESTAMP,TIMESTAMP,INT,BIGINT,BIGINT,BIGINT,BIGINT
 ---- RESULTS
@@ -61,7 +61,7 @@ BIGINT,INT,TIMESTAMP,TIMESTAMP
 ---- QUERY
 # Test filtering on timestamps that fall on the DST change. Stat filtering may skip this
 # value if not implemented carefully.
-set timezone=CET;
+set timezone=Europe/Budapest;
 select count(*) from int64_timestamps_at_dst_changes
 where millisutc = "2017-10-29 02:45:00" and microsutc = "2017-10-29 02:45:00";
 ---- TYPES
@@ -70,7 +70,7 @@ BIGINT
 2
 ====
 ---- QUERY
-set timezone=CET;
+set timezone=Europe/Budapest;
 select count(*) from int64_timestamps_at_dst_changes
 where millisutc = "2017-10-29 02:00:00";
 ---- TYPES
@@ -79,7 +79,7 @@ BIGINT
 1
 ====
 ---- QUERY
-set timezone=CET;
+set timezone=Europe/Budapest;
 select count(*) from int64_timestamps_at_dst_changes
 where microsutc = "2017-10-29 02:10:00";
 ---- TYPES
@@ -88,7 +88,7 @@ BIGINT
 1
 ====
 ---- QUERY
-set timezone=CET;
+set timezone=Europe/Budapest;
 select * from int64_timestamps_nano
 ---- TYPES
 BIGINT,TIMESTAMP,TIMESTAMP
