@@ -51,11 +51,17 @@ foreach(PYTHON_EXE IN LISTS PYTHON_EXES)
   # Supports fallback to impala-virtualenv for older Python versions.
   # This upgrades pip in the virtualenv to make the behavior more consistent across
   # different distributions
+  # Pip contains its own vendored certifi module, which contains a root CA certificate list,
+  # and cannot be disabled, only extended. Ensure that this list is not tainted by any of the
+  # eMudhra CA certificate weaknesses (see CVE-2026-114406)  by installing a known good version
+  # of pip carrying a known good  version of certifi.  Details described at
+  # https://discuss.python.org/t/information-for-python-users-regarding-emudhra-emsign-ca-certificate-security-incident/109576/5
+
   add_custom_target(${PYTHON_NAME}_venv
     BYPRODUCTS "${VENV}"
     COMMAND "${CMAKE_SOURCE_DIR}/bin/cmake_aux/create_virtualenv.sh"
             "${PYTHON_EXE}" "${VENV}"
-    COMMAND "${VENV}/bin/pip" install --cache-dir "${PIP_CACHE}" --upgrade pip
+    COMMAND "${VENV}/bin/python3" -m pip install --cache-dir "${PIP_CACHE}" --upgrade "pip @ https://files.pythonhosted.org/packages/3f/06/3e4420302363fbb71be3c7f35ce042f54bfca330e3e66b3a2e3c4cca579f/pip-26.2.2-py3-none-any.whl#sha256=fd7f4dfa8190e014013b9f08f3e973f4e4c26ffd179a204895533a7254813a70"
     COMMAND "${VENV}/bin/pip" install --cache-dir "${PIP_CACHE}" wheel
   )
 
